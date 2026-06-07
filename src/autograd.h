@@ -6,6 +6,7 @@
 #include <random>
 #include <span>
 #include <cassert>
+#include <string>
 
 #include "handle.h"
 
@@ -32,6 +33,12 @@ public:
         int n_children; // size of above arrays
     };
 
+    struct LeafMatrixRecord
+    {
+        NodeMatrixHandle matrix;
+        std::string name;
+    };
+
     // =============================================================================
     // RANDOM GENERATORS
     // =============================================================================
@@ -53,6 +60,7 @@ public:
         pool.resize(capacity);
         pool_size = 0;
         pool_high_water = 0;
+        leaf_matrices.clear();
     }
 
     NodeHandle allocate()
@@ -69,7 +77,7 @@ public:
     // @param num_cols    Number of columns in the matrix
     // @param std_dev     Standard deviation for Gaussian initialization
     // @return            Pool index of the first element (top-left corner)
-    NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev)
+    NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev, const char * optional_name_hint = NULL)
     {
         NodeHandle start_offset = pool_size;
         int total_elements = num_rows * num_cols;
@@ -77,7 +85,12 @@ public:
         {
             value_leaf(rand_gaussian(0, std_dev));
         }
-        return NodeMatrixHandle(start_offset, num_rows, num_cols);
+        NodeMatrixHandle result(start_offset, num_rows, num_cols);
+        LeafMatrixRecord record;
+        record.matrix = result;
+        if (optional_name_hint) record.name = optional_name_hint;
+        leaf_matrices.push_back(record);
+        return result;
     }
 
     void reset()
@@ -95,6 +108,8 @@ public:
     {
         return pool_high_water;
     }
+
+    std::span<const LeafMatrixRecord> get_leaf_matrices() const { return std::span<const LeafMatrixRecord>(leaf_matrices); }
 
     // careful holding on to the returned value because any value_* functions may cause the pool to reallocate and move
     Node & get(NodeHandle index)
@@ -380,6 +395,7 @@ private:
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<float> uniform{ 0, 1 };
     std::normal_distribution<float> gaussian{ 0, 1 };
+    std::vector <LeafMatrixRecord> leaf_matrices;
 };
 
 // activation function wrappers

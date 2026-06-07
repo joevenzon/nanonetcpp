@@ -11,11 +11,11 @@ struct MLPLayer
     LinearLayer<DataType> fc2;
     int hidden_dim = 0;
 
-    void init(AutoGrad<DataType> & ag, int in_dim, int hidden_dim)
+    void init(AutoGrad<DataType> & ag, int in_dim, int hidden_dim, const char * optional_name_hint = NULL)
     {
         this->hidden_dim = hidden_dim;
-        fc1.init(ag, hidden_dim, in_dim, 1.0 / std::sqrt(in_dim));
-        fc2.init(ag, in_dim, hidden_dim, 1.0 / std::sqrt(hidden_dim));
+        fc1.init(ag, hidden_dim, in_dim, 1.0 / std::sqrt(in_dim), optional_name_hint);
+        fc2.init(ag, in_dim, hidden_dim, 1.0 / std::sqrt(hidden_dim), optional_name_hint);
     }
 
     void forward(AutoGrad<DataType> & ag,

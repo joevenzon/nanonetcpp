@@ -18,9 +18,9 @@ struct TransformerBlock
     void init(AutoGrad<DataType> & ag, int emb_dim, int num_heads, int ffn_dim, float std_dev)
     {
         attention.init(ag, emb_dim, num_heads);
-        mlp.init(ag, emb_dim, ffn_dim);
-        norm1.init(ag, emb_dim, std_dev);
-        norm2.init(ag, emb_dim, std_dev);
+        mlp.init(ag, emb_dim, ffn_dim, "transformer_mlp");
+        norm1.init(ag, emb_dim, std_dev, "transformer_norm1");
+        norm2.init(ag, emb_dim, std_dev, "transformer_norm2");
     }
 
     // input[t], output[t] : span of emb_dim node handles per token

@@ -8,13 +8,16 @@
 #include "autograd.h"
 
 #define CHECKPOINT_MAGIC "NNCHK001"
-#define CHECKPOINT_VERSION 1
+#define CHECKPOINT_VERSION 2
 
 template <typename DataType>
 struct ParameterCheckpoint
 {
 	// the model weights themselves
 	std::vector <DataType> values;
+
+	// annotations about what the weights mean
+	std::vector <typename AutoGrad<DataType>::LeafMatrixRecord> leaf_matrices;
 
 	// for gradient accumulation
 	std::vector<DataType> grads;
@@ -37,6 +40,8 @@ struct ParameterCheckpoint
 		}
 
 		step_count = 0;
+
+		update(grad);
 	}
 
 	void update(AutoGrad<DataType> & grad)
@@ -47,6 +52,8 @@ struct ParameterCheckpoint
 			values[i] = node.data;
 			grads[i] = node.grad;
 		}
+
+		leaf_matrices.assign(grad.get_leaf_matrices().begin(), grad.get_leaf_matrices().end());
 	}
 
 	size_t size() const { return values.size(); }
@@ -55,12 +62,19 @@ struct ParameterCheckpoint
 	///
 	/// Format:
 	///   Header (32 bytes)
-	///     - Magic:      8 bytes  "NNCHK001" or similar
-	///     - Version:    4 bytes  uint32_t (little-endian)
-	///     - DataTypeID: 4 bytes  uint32_t (1 = 32-bit float)
-	///     - ParamCount: 8 bytes  uint64_t (number of parameters)
-	///     - StepCount:  8 bytes  int (signed, for Adam bias correction)
-	///     - Reserved:   4 bytes  zero padding for future use
+	///     - Magic:            8 bytes  "NNCHK001" or similar
+	///     - Version:          4 bytes  uint32_t (little-endian)
+	///     - DataTypeID:       4 bytes  uint32_t (1 = 32-bit float)
+	///     - ParamCount:       8 bytes  uint64_t (number of parameters)
+	///     - StepCount:        4 bytes  int (signed, for Adam bias correction)
+	///     - LeafMatrixCount:  4 bytes  uint32_t (number of LeafMatrixRecord entries)
+	///   Leaf Matrix Records (variable)
+	///     For each record:
+	///       - matrix.start:   4 bytes  int (NodeHandle)
+	///       - matrix.rows:    4 bytes  int
+	///       - matrix.cols:    4 bytes  int
+	///       - name.length:    4 bytes  uint32_t
+	///       - name.data:      variable bytes (UTF-8, no null terminator)
 	///   Payload (variable)
 	///     - values[]   paramCount * sizeof(DataType)
 	///     - grads[]    paramCount * sizeof(DataType)
@@ -96,13 +110,34 @@ struct ParameterCheckpoint
 
 		out.write(reinterpret_cast<const char *>(&step_count), sizeof(step_count));
 
-		// reserved padding
-		uint32_t reserved = 0;
-		out.write(reinterpret_cast<const char *>(&reserved), sizeof(reserved));
+		// leaf matrix count
+		uint32_t leafCount = static_cast<uint32_t>(leaf_matrices.size());
+		out.write(reinterpret_cast<const char *>(&leafCount), sizeof(leafCount));
 
 		if (!out)
 		{
 			err << "I/O error while writing checkpoint header";
+			return false;
+		}
+
+		// --- leaf matrix records ---
+		for (auto& rec : leaf_matrices)
+		{
+			out.write(reinterpret_cast<const char *>(&rec.matrix.start), sizeof(rec.matrix.start));
+			out.write(reinterpret_cast<const char *>(&rec.matrix.rows), sizeof(rec.matrix.rows));
+			out.write(reinterpret_cast<const char *>(&rec.matrix.cols), sizeof(rec.matrix.cols));
+
+			uint32_t nameLen = static_cast<uint32_t>(rec.name.size());
+			out.write(reinterpret_cast<const char *>(&nameLen), sizeof(nameLen));
+			if (nameLen > 0)
+			{
+				out.write(rec.name.c_str(), static_cast<std::streamsize>(nameLen));
+			}
+		}
+
+		if (!out)
+		{
+			err << "I/O error while writing leaf matrix records";
 			return false;
 		}
 
@@ -165,14 +200,42 @@ struct ParameterCheckpoint
 		int loadedStep = 0;
 		in.read(reinterpret_cast<char *>(&loadedStep), sizeof(loadedStep));
 
-		// skip reserved padding
-		char reserved[4];
-		in.read(reserved, sizeof(reserved));
+		// leaf matrix count
+		uint32_t leafCount = 0;
+		in.read(reinterpret_cast<char *>(&leafCount), sizeof(leafCount));
 
 		if (!in)
 		{
 			err << "I/O error while reading checkpoint header\n";
 			return false;
+		}
+
+		// --- leaf matrix records ---
+		leaf_matrices.clear();
+		leaf_matrices.reserve(leafCount);
+		for (uint32_t i = 0; i < leafCount; i++)
+		{
+			typename AutoGrad<DataType>::LeafMatrixRecord rec;
+			in.read(reinterpret_cast<char *>(&rec.matrix.start), sizeof(rec.matrix.start));
+			in.read(reinterpret_cast<char *>(&rec.matrix.rows), sizeof(rec.matrix.rows));
+			in.read(reinterpret_cast<char *>(&rec.matrix.cols), sizeof(rec.matrix.cols));
+
+			uint32_t nameLen = 0;
+			in.read(reinterpret_cast<char *>(&nameLen), sizeof(nameLen));
+			if (nameLen > 0)
+			{
+				std::vector<char> nameBuf(nameLen);
+				in.read(nameBuf.data(), static_cast<std::streamsize>(nameLen));
+				rec.name = std::string(nameBuf.data(), nameLen);
+			}
+
+			if (!in)
+			{
+				err << "I/O error while reading leaf matrix records\n";
+				return false;
+			}
+
+			leaf_matrices.push_back(std::move(rec));
 		}
 
 		// --- payload ---

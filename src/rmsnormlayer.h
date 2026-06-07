@@ -69,10 +69,10 @@ struct RMSNormLayer
     NodeMatrixHandle beta;
     DataType epsilon = 1e-5f;
 
-    void init(AutoGrad<DataType> & grad, int dim, DataType std_dev)
+    void init(AutoGrad<DataType> & grad, int dim, DataType std_dev, const char * optional_name_hint = NULL)
     {
-        gamma = grad.allocate_matrix(dim, 1, std_dev);
-        beta = grad.allocate_matrix(dim, 1, std_dev);
+        gamma = grad.allocate_matrix(dim, 1, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_gamma");
+        beta = grad.allocate_matrix(dim, 1, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_beta");
     }
 
     // @param input_indices  Array of pool indices for the inputs

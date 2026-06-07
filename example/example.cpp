@@ -121,7 +121,7 @@ struct Model
     static const int num_heads = 4;
     static const int head_dim = emb_dim / num_heads;
     static const int FOUR_X_EMB_DIM = 4 * emb_dim;
-    static constexpr float std_dev = 0.08f;
+    static constexpr float std_dev = 0.03f;
 
     EmbeddingLayer<float> wte;
     EmbeddingLayer<float> wpe;
@@ -131,9 +131,9 @@ struct Model
 
     void init(AutoGrad<float> & grad, int vocab_size)
     {
-        wte.init(grad, vocab_size, emb_dim, std_dev);
-        wpe.init(grad, block_size, emb_dim, std_dev);
-        lm_head.init(grad, vocab_size, emb_dim, std_dev);
+        wte.init(grad, vocab_size, emb_dim, std_dev, "wte");
+        wpe.init(grad, block_size, emb_dim, std_dev, "wtp");
+        lm_head.init(grad, vocab_size, emb_dim, std_dev, "lm_head");
 
         transformer.resize(num_layers);
         for (int li = 0; li < num_layers; li++)
@@ -290,11 +290,14 @@ int main(void)
     
     std::printf("num params: %d\n", (int)checkpoint.size());
 
+    float initial_val_loss = compute_validation_loss(checkpoint, grad, model);
+    std::printf("init validation loss: %f\n", initial_val_loss);
+
     // -----------------------------------------------------------------------
     // PHASE 3: TRAINING LOOP
     // -----------------------------------------------------------------------
     const int    num_training_steps = 10000;
-    const float base_learning_rate = 0.01f;
+    const float base_learning_rate = 0.005f;
 
     // Buffers for tokens, logits, and probabilities.
     std::array <NodeHandle, MAX_NUM_TOKENS> token_sequence;

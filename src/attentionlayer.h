@@ -20,10 +20,10 @@ struct AttentionLayer
         this->head_dim = emb_dim / num_heads;
 
         DataType std = 1.0 / std::sqrt(emb_dim);
-        wq.init(ag, emb_dim, emb_dim, std);
-        wk.init(ag, emb_dim, emb_dim, std);
-        wv.init(ag, emb_dim, emb_dim, std);
-        wo.init(ag, emb_dim, emb_dim, std);
+        wq.init(ag, emb_dim, emb_dim, std, "wq");
+        wk.init(ag, emb_dim, emb_dim, std, "wk");
+        wv.init(ag, emb_dim, emb_dim, std, "wv");
+        wo.init(ag, emb_dim, emb_dim, std, "wo");
     }
 
     // Whole-sequence forward with causal masking.

@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NN Weight Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #08090e;
+    --surface:   #0f111a;
+    --card:      #13161f;
+    --border:    #1c2030;
+    --border-hi: #2a3050;
+    --text:      #dde2f0;
+    --dim:       #556080;
+    --accent:    #21908c;
+    --accent-lo: #143b39;
+    --warm:      #fde725;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 22px 36px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header .logo {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--accent) 0%, #440154 100%);
+    border-radius: 7px;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  header .subtitle {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 1px;
+  }
+
+  /* ── Drop zone ───────────────────────────────────────────── */
+  #drop-area {
+    margin: 48px auto;
+    max-width: 540px;
+    border: 1.5px dashed var(--border-hi);
+    border-radius: 14px;
+    padding: 56px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  #drop-area:hover, #drop-area.dragover {
+    border-color: var(--accent);
+    background: rgba(33,144,140,0.05);
+  }
+  #drop-area input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  #drop-area .icon {
+    font-size: 36px; margin-bottom: 16px; opacity: 0.5;
+  }
+  #drop-area h2 {
+    font-size: 17px; font-weight: 600; margin-bottom: 8px; color: var(--text);
+  }
+  #drop-area p {
+    font-family: var(--mono); font-size: 11px; color: var(--dim); line-height: 1.7;
+  }
+  #drop-area .pill {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 8px 22px;
+    background: var(--accent-lo);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ── Error banner ─────────────────────────────────────────── */
+  #error-banner {
+    display: none;
+    margin: 0 36px 24px;
+    padding: 12px 18px;
+    background: rgba(200, 50, 50, 0.1);
+    border: 1px solid rgba(200,50,50,0.3);
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #f08080;
+  }
+
+  /* ── File meta strip ──────────────────────────────────────── */
+  #meta-strip {
+    display: none;
+    align-items: center;
+    gap: 0;
+    margin: 0 36px 28px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .meta-item {
+    flex: 1;
+    padding: 14px 20px;
+    border-right: 1px solid var(--border);
+  }
+  .meta-item:last-child { border-right: none; }
+  .meta-label {
+    font-family: var(--mono); font-size: 10px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;
+  }
+  .meta-value {
+    font-family: var(--mono); font-size: 13px; color: var(--text); font-weight: 500;
+  }
+
+  /* ── Matrix grid ─────────────────────────────────────────── */
+  #matrices {
+    display: none;
+    padding: 0 36px 60px;
+  }
+  #matrices h3 {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 18px;
+  }
+
+  /* ── Matrix card ─────────────────────────────────────────── */
+  .matrix-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .matrix-card:hover { border-color: var(--border-hi); }
+
+  .card-header {
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .card-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    word-break: break-all;
+    line-height: 1.4;
+  }
+  .card-dims {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 1px;
+    background: var(--accent-lo);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .canvas-wrap {
+    padding: 14px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .canvas-wrap canvas {
+    max-width: 100%;
+    max-height: 100%;
+    image-rendering: pixelated;
+    border-radius: 5px;
+    display: block;
+  }
+
+  /* Fixed square container — canvas sits centred inside, never stretched */
+  .heatmap-box {
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  /* color scale bar */
+  .scale-bar-wrap {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .scale-bar-wrap canvas {
+    flex: 1; height: 8px; border-radius: 4px; width: auto; max-width: none;
+    image-rendering: auto;
+  }
+  .scale-min, .scale-max {
+    font-family: var(--mono); font-size: 9px; color: var(--dim); white-space: nowrap;
+  }
+
+  .card-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    border-top: 1px solid var(--border);
+  }
+  .stat {
+    padding: 10px 12px;
+    border-right: 1px solid var(--border);
+  }
+  .stat:last-child { border-right: none; }
+  .stat-label {
+    font-family: var(--mono); font-size: 9px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px;
+  }
+  .stat-val {
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+  }
+
+  /* ── Loading ─────────────────────────────────────────────── */
+  #loading {
+    display: none;
+    text-align: center;
+    padding: 60px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"></div>
+  <div>
+    <h1>Weight Visualizer</h1>
+    <div class="subtitle">Neural network checkpoint inspector</div>
+  </div>
+</header>
+
+<div id="drop-area">
+  <input type="file" id="file-input" accept="*">
+  <div class="icon">⬡</div>
+  <h2>Drop checkpoint file here</h2>
+  <p>Supports NNCHK binary format<br>values payload rendered as viridis heatmaps</p>
+  <span class="pill">Choose file</span>
+</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  Parsing checkpoint…
+</div>
+
+<div id="error-banner"></div>
+
+<div id="meta-strip">
+  <div class="meta-item"><div class="meta-label">Magic</div><div class="meta-value" id="m-magic">—</div></div>
+  <div class="meta-item"><div class="meta-label">Version</div><div class="meta-value" id="m-version">—</div></div>
+  <div class="meta-item"><div class="meta-label">Parameters</div><div class="meta-value" id="m-params">—</div></div>
+  <div class="meta-item"><div class="meta-label">Step</div><div class="meta-value" id="m-step">—</div></div>
+  <div class="meta-item"><div class="meta-label">Matrices</div><div class="meta-value" id="m-matrices">—</div></div>
+  <div class="meta-item"><div class="meta-label">Data type</div><div class="meta-value" id="m-dtype">—</div></div>
+</div>
+
+<div id="matrices">
+  <h3 id="matrices-heading">Leaf matrices — values</h3>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+// ── Viridis colormap ───────────────────────────────────────────
+// Key stops sampled from the official matplotlib viridis LUT
+const VIRIDIS_STOPS = [
+  [68,  1,  84],
+  [71, 13,  96],
+  [72, 24, 107],
+  [72, 35, 116],
+  [71, 46, 124],
+  [69, 56, 130],
+  [66, 66, 135],
+  [62, 76, 139],
+  [59, 85, 143],
+  [55, 95, 145],
+  [52,104, 148],
+  [49,113, 149],
+  [46,122, 150],
+  [44,131, 150],
+  [41,140, 149],
+  [39,148, 148],
+  [38,157, 145],
+  [40,166, 141],
+  [46,174, 136],
+  [56,182, 128],
+  [70,189, 119],
+  [88,196, 109],
+  [109,202, 97],
+  [131,208, 83],
+  [155,213, 68],
+  [180,217, 52],
+  [206,220, 37],
+  [231,222, 28],
+  [253,231, 37],
+];
+
+function viridisRGB(t) {
+  t = Math.max(0, Math.min(1, t));
+  const idx = t * (VIRIDIS_STOPS.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.min(Math.ceil(idx), VIRIDIS_STOPS.length - 1);
+  const f  = idx - lo;
+  const a  = VIRIDIS_STOPS[lo];
+  const b  = VIRIDIS_STOPS[hi];
+  return [
+    Math.round(a[0] + f * (b[0] - a[0])),
+    Math.round(a[1] + f * (b[1] - a[1])),
+    Math.round(a[2] + f * (b[2] - a[2])),
+  ];
+}
+
+// ── Number formatting ──────────────────────────────────────────
+function fmt(v) {
+  if (Math.abs(v) < 0.001 || Math.abs(v) >= 10000) return v.toExponential(2);
+  return v.toFixed(4).replace(/\.?0+$/, '') || '0';
+}
+
+function fmtBig(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+// ── Binary parser ──────────────────────────────────────────────
+function parseCheckpoint(buffer) {
+  const dv = new DataView(buffer);
+  let offset = 0;
+
+  // Magic (8 bytes)
+  const magicBytes = new Uint8Array(buffer, 0, 8);
+  const magic = new TextDecoder().decode(magicBytes).replace(/\0+$/, '');
+  offset += 8;
+
+  // Version (4 bytes)
+  const version = dv.getUint32(offset, true); offset += 4;
+
+  // DataTypeID (4 bytes)
+  const dataTypeID = dv.getUint32(offset, true); offset += 4;
+
+  // ParamCount (8 bytes, uint64)
+  const paramCount = Number(dv.getBigUint64(offset, true)); offset += 8;
+
+  // StepCount (4 bytes, int32)
+  const stepCount = dv.getInt32(offset, true); offset += 4;
+
+  // LeafMatrixCount (4 bytes)
+  const leafMatrixCount = dv.getUint32(offset, true); offset += 4;
+
+  // Leaf Matrix Records
+  const records = [];
+  const decoder = new TextDecoder();
+
+  for (let i = 0; i < leafMatrixCount; i++) {
+    const start = dv.getInt32(offset, true); offset += 4;
+    const rows  = dv.getInt32(offset, true); offset += 4;
+    const cols  = dv.getInt32(offset, true); offset += 4;
+    const nameLen = dv.getUint32(offset, true); offset += 4;
+    const nameBytes = new Uint8Array(buffer, offset, nameLen);
+    const name = decoder.decode(nameBytes);
+    offset += nameLen;
+    records.push({ start, rows, cols, name });
+  }
+
+  // Payload: values[] (paramCount float32s)
+  if (dataTypeID !== 1) throw new Error(`Unsupported DataTypeID: ${dataTypeID} (expected 1 = float32)`);
+
+  const bytesPerVal = 4;
+  const valuesStart = offset;
+
+  // Extract each matrix's values slice
+  const matrices = records.map(r => {
+    const size = r.rows * r.cols;
+    const byteOff = valuesStart + r.start * bytesPerVal;
+    const slice = new Float32Array(buffer.slice(byteOff, byteOff + size * bytesPerVal));
+    return { ...r, data: slice };
+  });
+
+  return { magic, version, dataTypeID, paramCount, stepCount, leafMatrixCount, matrices };
+}
+
+// ── Statistics ─────────────────────────────────────────────────
+function stats(arr) {
+  let min = Infinity, max = -Infinity, sum = 0, sum2 = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum  += v;
+    sum2 += v * v;
+  }
+  const n    = arr.length;
+  const mean = sum / n;
+  const std  = Math.sqrt(sum2 / n - mean * mean);
+  return { min, max, mean, std };
+}
+
+// ── Draw heatmap on canvas ─────────────────────────────────────
+function drawHeatmap(canvas, data, rows, cols, min, max) {
+  const MAX = 320;
+
+  // Fit within a MAX×MAX square while preserving aspect ratio.
+  // Enforce a minimum of 8px on the short side so single-row/col vectors are visible.
+  let cw, ch;
+  if (cols >= rows) {
+    cw = MAX;
+    ch = Math.max(8, Math.round(MAX * rows / cols));
+  } else {
+    ch = MAX;
+    cw = Math.max(8, Math.round(MAX * cols / rows));
+  }
+
+  canvas.width  = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(cw, ch);
+  const d = imageData.data;
+  const range = max - min || 1;
+
+  for (let py = 0; py < ch; py++) {
+    for (let px = 0; px < cw; px++) {
+      const r = Math.min(rows - 1, Math.floor(py * rows / ch));
+      const c = Math.min(cols - 1, Math.floor(px * cols / cw));
+      const val = data[r * cols + c];
+      const t = (val - min) / range;
+      const [R, G, B] = viridisRGB(t);
+      const i = (py * cw + px) * 4;
+      d[i] = R; d[i+1] = G; d[i+2] = B; d[i+3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ── Draw scale bar ─────────────────────────────────────────────
+function drawScaleBar(canvas) {
+  const W = 200, H = 8;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(W, H);
+  const d = imageData.data;
+  for (let x = 0; x < W; x++) {
+    const [R, G, B] = viridisRGB(x / (W - 1));
+    for (let y = 0; y < H; y++) {
+      const i = (y * W + x) * 4;
+      d[i] = R; d[i+1] = G; d[i+2] = B; d[i+3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ── Build a matrix card ────────────────────────────────────────
+function buildCard(m) {
+  const s = stats(m.data);
+
+  const card = document.createElement('div');
+  card.className = 'matrix-card';
+
+  const header = document.createElement('div');
+  header.className = 'card-header';
+  header.innerHTML = `
+    <div class="card-name">${m.name || '(unnamed)'}</div>
+    <div class="card-dims">${m.rows}×${m.cols}</div>
+  `;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'canvas-wrap';
+
+  const heatCanvas = document.createElement('canvas');
+  drawHeatmap(heatCanvas, m.data, m.rows, m.cols, s.min, s.max);
+  const heatBox = document.createElement('div');
+  heatBox.className = 'heatmap-box';
+  heatBox.appendChild(heatCanvas);
+
+  const scaleWrap = document.createElement('div');
+  scaleWrap.className = 'scale-bar-wrap';
+  const scaleMin = document.createElement('span');
+  scaleMin.className = 'scale-min';
+  scaleMin.textContent = fmt(s.min);
+  const scaleCanvas = document.createElement('canvas');
+  drawScaleBar(scaleCanvas);
+  const scaleMax = document.createElement('span');
+  scaleMax.className = 'scale-max';
+  scaleMax.textContent = fmt(s.max);
+  scaleWrap.appendChild(scaleMin);
+  scaleWrap.appendChild(scaleCanvas);
+  scaleWrap.appendChild(scaleMax);
+
+  wrap.appendChild(heatBox);
+  wrap.appendChild(scaleWrap);
+
+  const statsRow = document.createElement('div');
+  statsRow.className = 'card-stats';
+  const statDefs = [
+    ['min', fmt(s.min)],
+    ['max', fmt(s.max)],
+    ['mean', fmt(s.mean)],
+    ['std', fmt(s.std)],
+  ];
+  statDefs.forEach(([label, val]) => {
+    statsRow.innerHTML += `<div class="stat"><div class="stat-label">${label}</div><div class="stat-val">${val}</div></div>`;
+  });
+
+  card.appendChild(header);
+  card.appendChild(wrap);
+  card.appendChild(statsRow);
+  return card;
+}
+
+// ── Render results ─────────────────────────────────────────────
+function render(checkpoint, filename) {
+  const { magic, version, paramCount, stepCount, matrices } = checkpoint;
+
+  document.getElementById('m-magic').textContent    = magic;
+  document.getElementById('m-version').textContent  = `v${version}`;
+  document.getElementById('m-params').textContent   = fmtBig(paramCount);
+  document.getElementById('m-step').textContent     = stepCount.toLocaleString();
+  document.getElementById('m-matrices').textContent = matrices.length;
+  document.getElementById('m-dtype').textContent    = 'float32';
+
+  const metaStrip = document.getElementById('meta-strip');
+  metaStrip.style.display = 'flex';
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  matrices.forEach(m => grid.appendChild(buildCard(m)));
+
+  document.getElementById('matrices-heading').textContent =
+    `${matrices.length} leaf matrices — values  ·  ${filename}`;
+
+  document.getElementById('matrices').style.display = 'block';
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = '⚠  ' + msg;
+  el.style.display = 'block';
+}
+
+function clearError() {
+  const el = document.getElementById('error-banner');
+  el.style.display = 'none';
+}
+
+// ── File handling ──────────────────────────────────────────────
+function handleFile(file) {
+  clearError();
+  document.getElementById('drop-area').style.display = 'none';
+  document.getElementById('loading').style.display   = 'block';
+  document.getElementById('meta-strip').style.display  = 'none';
+  document.getElementById('matrices').style.display    = 'none';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('loading').style.display = 'none';
+    try {
+      const checkpoint = parseCheckpoint(e.target.result);
+      render(checkpoint, file.name);
+    } catch (err) {
+      document.getElementById('drop-area').style.display = 'block';
+      showError(err.message);
+    }
+  };
+  reader.onerror = () => {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('drop-area').style.display = 'block';
+    showError('Failed to read file.');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Event listeners ────────────────────────────────────────────
+const dropArea = document.getElementById('drop-area');
+const fileInput = document.getElementById('file-input');
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+dropArea.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropArea.classList.add('dragover');
+});
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
+dropArea.addEventListener('drop', e => {
+  e.preventDefault();
+  dropArea.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+</script>
+</body>
+</html>
