@@ -497,7 +497,10 @@ int main(void)
     // -----------------------------------------------------------------------
     // Write the final parameter values to a binary file.
 
-    checkpoint.saveToFile("checkpoint.chk");
+    if (checkpoint.saveToFile("checkpoint.chk"))
+    {
+        std::printf("wrote checkpoint to disk (%d weights)", (int)checkpoint.values.size());
+    }
 
     return 0;
 }

@@ -2,6 +2,8 @@
 
 #include "autograd.h"
 
+#include <cassert>
+
 // ---------------------------------------------------------------------------
 // SOFTMAX
 // ---------------------------------------------------------------------------
@@ -23,6 +25,9 @@ struct SoftmaxLayer
         std::span <NodeHandle> output_indices)
     {
         if (input_indices.empty()) return;
+
+        // Assert input and output sizes match
+        assert(input_indices.size() == output_indices.size());
 
         // Step 1: Find the maximum logit value for numerical stability.
         DataType max_value = grad.get(input_indices[0]).data;

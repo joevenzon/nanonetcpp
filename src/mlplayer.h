@@ -23,6 +23,10 @@ struct MLPLayer
         std::span<NodeHandle> output)
     {
         assert(hidden_dim > 0);
+        
+        // Assert dimension compatibility: input must match fc1 columns, output must match fc2 rows
+        assert((int)input.size() == fc1.parameters.cols);
+        assert((int)output.size() == fc2.parameters.rows);
 
         std::vector<NodeHandle> hidden(hidden_dim);
         fc1.forward(ag, input, hidden);

@@ -2,6 +2,8 @@
 
 #include "autograd.h"
 
+#include <cassert>
+
 // ---------------------------------------------------------------------------
 // RMSNORM (ROOT MEAN SQUARE NORMALIZATION)
 // ---------------------------------------------------------------------------
@@ -30,6 +32,9 @@ struct SimpleRMSNormLayer
         std::span <NodeHandle> output_indices)
     {
         if (input_indices.empty()) return;
+
+        // Assert input and output sizes match
+        assert(input_indices.size() == output_indices.size());
 
         // Step 1: Compute sum of squares: sum(x[i]^2)
         NodeHandle sum_of_squares = grad.value_mul(input_indices[0], input_indices[0]);
@@ -60,8 +65,8 @@ struct SimpleRMSNormLayer
 template <typename DataType>
 struct RMSNormLayer
 {
-    NodeHandle gamma;
-    NodeHandle beta;
+    NodeMatrixHandle gamma;
+    NodeMatrixHandle beta;
     DataType epsilon = 1e-5f;
 
     void init(AutoGrad<DataType> & grad, int dim, DataType std_dev)
@@ -79,6 +84,11 @@ struct RMSNormLayer
     {
         if (input_indices.empty())
             return;
+
+        // Assert dimension compatibility: input/output must match gamma and beta dimensions
+        assert((int)input_indices.size() == gamma.rows);
+        assert((int)output_indices.size() == gamma.rows);
+        assert(input_indices.size() == output_indices.size());
 
         // Step 1: Compute sum of squares: sum(x[i]^2)
         NodeHandle sum_of_squares = grad.value_mul(input_indices[0], input_indices[0]);
@@ -101,8 +111,8 @@ struct RMSNormLayer
         for (int i = 0; i < (int)input_indices.size(); i++)
         {
             NodeHandle normalized = grad.value_mul(input_indices[i], rms_inv);
-            NodeHandle scaled = grad.value_mul(normalized, gamma + i);
-            output_indices[i] = grad.value_add(scaled, beta + i);
+            NodeHandle scaled = grad.value_mul(normalized, gamma.get(i));
+            output_indices[i] = grad.value_add(scaled, beta.get(i));
         }
     }
 };

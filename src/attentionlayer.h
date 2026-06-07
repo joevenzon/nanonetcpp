@@ -3,6 +3,8 @@
 #include "autograd.h"
 #include "softmaxlayer.h"
 
+#include <cassert>
+
 template <typename DataType>
 struct KVCache
 {
@@ -78,6 +80,10 @@ struct AttentionLayer
         std::span<NodeHandle> input,
         std::span<NodeHandle> output)
     {
+        // Assert dimension compatibility: input/output must match emb_dim
+        assert((int)input.size() == emb_dim);
+        assert((int)output.size() == emb_dim);
+
         // -----------------------------------------------------------------------
         // STEP 1: PROJECT INPUT TO Q, K, V
         // -----------------------------------------------------------------------
@@ -91,7 +97,7 @@ struct AttentionLayer
         // -----------------------------------------------------------------------
         // Extract raw floats from the graph and store them outside it.
         // Past positions are injected back as constants during attention,
-        // so they don't participate in backprop — only the current position does.
+        // so they don't participate in backprop ï¿½ only the current position does.
         cache.store(ag, k, v);
         int seq_len = cache.current_length;  // includes current position
 
@@ -101,7 +107,7 @@ struct AttentionLayer
         // scale factor: 1 / sqrt(head_dim), shared across all heads and positions
         NodeHandle scale = ag.value_const(1.0 / std::sqrt(head_dim));
 
-        // output accumulator — heads write into their own slice, then we project
+        // output accumulator ï¿½ heads write into their own slice, then we project
         std::vector<NodeHandle> concat_out(emb_dim);
 
         for (int h = 0; h < num_heads; h++)

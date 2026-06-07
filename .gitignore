@@ -4,4 +4,5 @@ out/
 *.exe
 *.chk
 *.pdb
+*.ilk
 CMakeSettings.json

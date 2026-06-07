@@ -2,6 +2,7 @@
 
 #include "autograd.h"
 
+#include <span>
 #include <cassert>
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@
 template <typename DataType>
 struct EmbeddingLayer
 {
-    NodeHandle parameters;
+    NodeMatrixHandle parameters;
     int emb_dim = 0;
 
     void init(AutoGrad<DataType> & grad, int num_embeddings, int emb_dim, DataType std_dev)
@@ -36,11 +37,11 @@ struct EmbeddingLayer
         std::span<NodeHandle> output_indices)
     {
         assert(emb_dim > 0); // ensure we got initialized
+        assert((int)output_indices.size() == emb_dim); // output buffer must match embedding dimension
 
-        NodeHandle row_start = parameters + token_id * emb_dim;
         for (int j = 0; j < emb_dim; j++)
         {
-            output_indices[j] = row_start + j;
+            output_indices[j] = parameters.get(token_id, j);
         }
     }
 };

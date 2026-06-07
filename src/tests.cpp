@@ -233,13 +233,17 @@ static void test_reset(AutoGrad<DataType> &ag)
 static void test_allocate_matrix(AutoGrad<DataType> &ag)
 {
     printf("test_allocate_matrix ... ");
-    NodeHandle offset = ag.allocate_matrix(2, 3, 0.1f);
+    NodeMatrixHandle matrix = ag.allocate_matrix(2, 3, 0.1f);
 
     // Quick sanity: nodes exist and have data in a reasonable range
     bool ok = true;
-    for (int i = 0; i < 6; i++) {
-        float val = ag.get(offset + i).data;
-        if (std::abs(val) > 3.0f) ok = false;  // 3-sigma bound, very unlikely to fail
+    for (int row = 0; row < 2; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            float val = ag.get(matrix.get(row, col)).data;
+            if (std::abs(val) > 3.0f) ok = false;  // 3-sigma bound, very unlikely to fail
+        }
     }
     if (!ok) {
         ++g_failed;

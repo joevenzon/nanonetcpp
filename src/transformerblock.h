@@ -4,6 +4,8 @@
 #include "mlplayer.h"
 #include "rmsnormlayer.h"
 
+#include <cassert>
+
 template <typename DataType>
 struct TransformerBlock
 {
@@ -24,6 +26,9 @@ struct TransformerBlock
         const std::span<NodeHandle> input,
         std::span<NodeHandle> output)
     {
+        // Assert input and output sizes match
+        assert(input.size() == output.size());
+
         // attention sub-block with residual
         std::vector<NodeHandle> normed1(input.size());
         norm1.forward(ag, input, normed1);

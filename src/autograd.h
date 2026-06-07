@@ -63,12 +63,12 @@ public:
         return index; // return the index of the allocation
     }
 
-    // Allocate a matrix of leaf nodes in the pool and return the starting offset.
+    // Allocate a matrix of leaf nodes in the pool and return the starting offset & length.
     // @param num_rows    Number of rows in the matrix
     // @param num_cols    Number of columns in the matrix
     // @param std_dev     Standard deviation for Gaussian initialization
     // @return            Pool index of the first element (top-left corner)
-    NodeHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev)
+    NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev)
     {
         NodeHandle start_offset = pool_size;
         int total_elements = num_rows * num_cols;
@@ -76,7 +76,7 @@ public:
         {
             value_leaf(rand_gaussian(0, std_dev));
         }
-        return start_offset;
+        return NodeMatrixHandle(start_offset, num_rows, num_cols);
     }
 
     void reset()
