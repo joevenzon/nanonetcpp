@@ -115,146 +115,134 @@ static void split_train_val()
 struct Model
 {
     // model hyperparameters
-    static const int num_layers = 1; // Depth of the transformer (number of stacked layers)
-    static const int emb_dim = 16; // Width of the network (embedding dimension)
-    static const int block_size = 16; // Maximum context length for the attention window
-    static const int num_heads = 4;   // Number of parallel attention heads
-    static const int head_dim = emb_dim / num_heads;  // Dimension per attention head (16/4=4)
-    static const int FOUR_X_EMB_DIM = 4 * emb_dim;          // MLP hidden dimension (4x embedding size)
+    static const int num_layers = 1;
+    static const int emb_dim = 16;
+    static const int block_size = 16;
+    static const int num_heads = 4;
+    static const int head_dim = emb_dim / num_heads;
+    static const int FOUR_X_EMB_DIM = 4 * emb_dim;
     static constexpr float std_dev = 0.08f;
 
     EmbeddingLayer<float> wte;
     EmbeddingLayer<float> wpe;
     SimpleRMSNormLayer<float> embed_norm;
     LinearLayer<float> lm_head;
-    std::vector <TransformerBlock<float> > transformer;
+    std::vector<TransformerBlock<float> > transformer;
 
     void init(AutoGrad<float> & grad, int vocab_size)
     {
-        // Token embedding table: maps each token ID to an emb_dim-dimensional vector.
         wte.init(grad, vocab_size, emb_dim, std_dev);
-
-        // Position embedding table: maps each position to an emb_dim-dimensional vector.
         wpe.init(grad, block_size, emb_dim, std_dev);
-
-        // Language model head (unembedding): maps hidden state to vocabulary logits.
         lm_head.init(grad, vocab_size, emb_dim, std_dev);
 
-        // Per-layer weights.
         transformer.resize(num_layers);
         for (int li = 0; li < num_layers; li++)
-        {
-            transformer[li].init(grad, emb_dim, num_heads, block_size, FOUR_X_EMB_DIM, std_dev);
-        }
+            transformer[li].init(grad, emb_dim, num_heads, FOUR_X_EMB_DIM, std_dev);
     }
 
-    void reset_kv_cache()
+    // Whole-sequence forward.
+    // tokens     : seq_len token ids (positions 0..seq_len-1)
+    // out_logits : seq_len spans, each of size vocab_size, written here
+    void forward(
+        AutoGrad<float> & grad,
+        std::span<const int> tokens,
+        std::span<std::span<NodeHandle> > out_logits)
     {
+        int seq_len = (int)tokens.size();
+        assert((int)out_logits.size() == seq_len);
+
+        // --- STEP 1: token + position embedding, then RMSNorm (per position) ---
+        std::vector<std::array<NodeHandle, emb_dim> > normed(seq_len);
+        std::vector<std::span<NodeHandle> >           normed_spans(seq_len);
+
+        for (int t = 0; t < seq_len; t++)
+        {
+            std::array<NodeHandle, emb_dim> token_embedded, pos_embedded, embedded;
+            wte.forward(grad, tokens[t], token_embedded);
+            wpe.forward(grad, t, pos_embedded);
+
+            for (int j = 0; j < emb_dim; j++)
+                embedded[j] = grad.value_add(token_embedded[j], pos_embedded[j]);
+
+            embed_norm.forward(grad, embedded, normed[t]);
+            normed_spans[t] = std::span<NodeHandle>(normed[t].data(), emb_dim);
+        }
+
+        // --- STEP 2: transformer layers (whole sequence) ---
+        std::vector<std::array<NodeHandle, emb_dim>> hidden(seq_len);
+        std::vector<std::span<NodeHandle>>           hidden_spans(seq_len);
+        for (int t = 0; t < seq_len; t++)
+            hidden_spans[t] = std::span<NodeHandle>(hidden[t].data(), emb_dim);
+
+        // ping-pong buffers between layers
+        std::span<const std::span<NodeHandle>> layer_in(normed_spans.data(), seq_len);
+        std::span<std::span<NodeHandle>>       layer_out(hidden_spans.data(), seq_len);
+
         for (int li = 0; li < num_layers; li++)
         {
-            transformer[li].reset_kv_cache();
-        }
-    }
-
-    void forward(AutoGrad<float> & grad,
-        int input_token_id,
-        int input_position,
-        std::span<NodeHandle> output)
-    {
-        // -----------------------------------------------------------------------
-        // STEP 1: TOKEN AND POSITION EMBEDDING
-        // -----------------------------------------------------------------------
-        // Look up the token embedding from wte[token_id] and position embedding
-        // from wpe[position], then add them together and apply RMSNorm.
-
-        std::array <NodeHandle, emb_dim> token_embedded, pos_embedded, embedded;
-        wte.forward(grad, input_token_id, token_embedded);
-        wpe.forward(grad, input_position, pos_embedded);
-
-        for (int j = 0; j < emb_dim; j++)
-        {
-            // x[j] = wte[token_id][j] + wpe[position][j]
-            embedded[j] = grad.value_add(token_embedded[j], pos_embedded[j]);
+            transformer[li].forward(grad, layer_in, layer_out);
+            // after first layer, feed hidden back in as input
+            layer_in = std::span<const std::span<NodeHandle>>(hidden_spans.data(), seq_len);
         }
 
-        // Apply RMSNorm to the combined embedding.
-        std::array <NodeHandle, emb_dim> embedded_normalized;
-        embed_norm.forward(grad, embedded, embedded_normalized);
-        
-        // -----------------------------------------------------------------------
-        // STEP 2: TRANSFORMER LAYERS
-        // -----------------------------------------------------------------------
-        for (int layer_idx = 0; layer_idx < num_layers; layer_idx++)
-        {
-            // output back to the (now unused) embedded vector
-            transformer[layer_idx].forward(grad, embedded_normalized, embedded);
-        }
-
-        // -----------------------------------------------------------------------
-        // STEP 3: LANGUAGE MODEL HEAD (UNEMBEDDING)
-        // -----------------------------------------------------------------------
-        // Project the final hidden state to vocabulary-size logits.
-        // These logits represent the unnormalized log probabilities for the next token.
-        lm_head.forward(grad, embedded, output);
+        // --- STEP 3: lm head per position ---
+        for (int t = 0; t < seq_len; t++)
+            lm_head.forward(grad, hidden_spans[t], out_logits[t]);
     }
 };
 
 // Compute validation loss by running forward pass on all validation documents.
 // Returns the average negative log likelihood over all validation positions.
-float compute_validation_loss(ParameterCheckpoint<float> & checkpoint, AutoGrad<float> & grad, Model & model)
+float compute_validation_loss(
+    ParameterCheckpoint<float> & checkpoint,
+    AutoGrad<float> & grad, Model & model)
 {
-    std::array <int, vocab_size> logit_nodes;
-    std::array <int, vocab_size> prob_nodes;
-    std::array <int, MAX_NUM_TOKENS> token_sequence;
-
+    SoftmaxLayer<float> softmax_layer;
     float total_loss = 0.0f;
     int total_positions = 0;
 
+    std::array<int, MAX_NUM_TOKENS> token_sequence;
+
     for (int doc_idx = 0; doc_idx < g_num_val; doc_idx++)
     {
-        int doc_file_idx = g_val_indices[doc_idx];
-        const char * current_doc = g_documents[doc_file_idx];
+        const char * current_doc = g_documents[g_val_indices[doc_idx]];
         int doc_length = (int)std::strlen(current_doc);
 
-        // Reset KV cache & pool for each document.
         grad.restore_parameter_values(checkpoint.values);
-        model.reset_kv_cache();
 
-        // Tokenize the document.
         int num_tokens = 0;
         token_sequence[num_tokens++] = g_token_bos;
-        for (int i = 0; i < doc_length; i++) {
+        for (int i = 0; i < doc_length; i++)
             token_sequence[num_tokens++] = char_to_token_id(current_doc[i]);
-        }
         token_sequence[num_tokens++] = g_token_bos;
 
-        int num_positions = num_tokens - 1;
-        if (num_positions > model.block_size)
-        {
-            num_positions = model.block_size;
-        }
+        int seq_len = num_tokens - 1;          // we predict tokens 1..num_tokens-1
+        if (seq_len > model.block_size) seq_len = model.block_size;
 
-        // Forward pass without accumulating gradients (no backward pass).
-        for (int pos = 0; pos < num_positions; pos++)
+        // logits buffer: seq_len x vocab_size
+        std::vector<std::array<NodeHandle, vocab_size> > logits(seq_len);
+        std::vector<std::span<NodeHandle> >              logit_spans(seq_len);
+        for (int t = 0; t < seq_len; t++)
+            logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
+
+        model.forward(grad,
+            std::span<const int>(token_sequence.data(), seq_len),
+            std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+
+        std::array<NodeHandle, vocab_size> prob_nodes;
+        for (int pos = 0; pos < seq_len; pos++)
         {
-            int current_token = token_sequence[pos];
             int target_token = token_sequence[pos + 1];
+            softmax_layer.forward(grad, logit_spans[pos], prob_nodes);
 
-            model.forward(grad, current_token, pos, logit_nodes);
-            
-            SoftmaxLayer<float> softmax_layer;
-            softmax_layer.forward(grad, logit_nodes, prob_nodes);
-
-            // Compute negative log likelihood for this position.
             float prob = grad.get(prob_nodes[target_token]).data;
-            if (prob < 1e-7f) prob = 1e-7f;  // Clamp for numerical stability.
+            if (prob < 1e-7f) prob = 1e-7f;
             total_loss -= std::log(prob);
             total_positions++;
         }
     }
 
-    if (total_positions == 0) return 0.0f;
-    return total_loss / (float)total_positions;
+    return total_positions == 0 ? 0.0f : total_loss / (float)total_positions;
 }
 
 int main(void)
@@ -295,7 +283,8 @@ int main(void)
 
     AdamOptimizer<float> optimizer;
 
-    // Record the total number of parameters and copy initial values to persistent storage.
+    // Record the total number of parameters and copy initial values (which are the model weights) to
+    // persistent storage in the checkpoint
     ParameterCheckpoint<float> checkpoint;
     checkpoint.init(grad);
     
@@ -306,9 +295,6 @@ int main(void)
     // -----------------------------------------------------------------------
     const int    num_training_steps = 10000;
     const float base_learning_rate = 0.01f;
-    const float adam_beta1 = 0.9f;   // Exponential decay rate for the first moment
-    const float adam_beta2 = 0.999f; // Exponential decay rate for the second moment
-    const float adam_epsilon = 1e-8f; // Small constant for numerical stability
 
     // Buffers for tokens, logits, and probabilities.
     std::array <NodeHandle, MAX_NUM_TOKENS> token_sequence;
@@ -320,15 +306,12 @@ int main(void)
         // Restore parameter values into the pool (pool is rebuilt each step).
         grad.restore_parameter_values(checkpoint.values);
 
-        // Reset the KV cache for a fresh forward pass.
-        model.reset_kv_cache();
-
         // Select a document from the training set and tokenize it.
         // Tokens are surrounded by BOS tokens on both sides.
         const char * current_doc = g_documents[g_train_indices[step % g_num_train]];
         int doc_length = (int)std::strlen(current_doc);
+        
         int num_tokens = 0;
-
         token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
         for (int i = 0; i < doc_length; i++) 
         {
@@ -337,42 +320,40 @@ int main(void)
         token_sequence[num_tokens++] = g_token_bos;  // Trailing BOS token (end of sequence)
 
         // Number of training positions (we predict the next token, so n = num_tokens - 1).
-        int num_positions = num_tokens - 1;
-        if (num_positions > model.block_size) 
+        int seq_len = num_tokens - 1;
+        if (seq_len > model.block_size) seq_len = model.block_size;
+
+        // logits: seq_len x vocab_size
+        std::vector<std::array<NodeHandle, vocab_size>> logits(seq_len);
+        std::vector<std::span<NodeHandle>>              logit_spans(seq_len);
+        for (int t = 0; t < seq_len; t++)
+            logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
+
+        // SINGLE whole-sequence forward pass
+        model.forward(grad,
+            std::span<const int>(token_sequence.data(), seq_len),
+            std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+
+        // Accumulate loss over all positions
+        SoftmaxLayer<float> softmax_layer;
+        std::array<NodeHandle, vocab_size> prob_nodes;
+        int loss_accumulator = -1;
+
+        for (int pos = 0; pos < seq_len; pos++)
         {
-            num_positions = model.block_size;  // Clamp to the maximum context length.
-        }
+            int target_token = token_sequence[pos + 1];
+            softmax_layer.forward(grad, logit_spans[pos], prob_nodes);
 
-        // Forward pass: compute the loss as the average negative log likelihood.
-        int loss_accumulator = -1;  // Sentinel value indicating "not yet initialized"
+            int neg_log_prob = grad.value_mul_const(
+                grad.value_log(prob_nodes[target_token]), -1);
 
-        for (int pos = 0; pos < num_positions; pos++)
-        {
-            int current_token = token_sequence[pos];
-            int target_token = token_sequence[pos + 1];  // The token we want to predict
-
-            // Run the GPT forward pass to get logits for the next token.
-            model.forward(grad, current_token, pos, logit_nodes);
-
-            // Convert logits to probabilities via softmax.
-            SoftmaxLayer<float> softmax_layer;
-            softmax_layer.forward(grad, logit_nodes, prob_nodes);
-
-            // Compute negative log likelihood for the target token:
-            // loss = -log(prob[target_token])
-            int neg_log_prob = grad.value_mul_const(grad.value_log(prob_nodes[target_token]), -1);
-
-            // Accumulate the loss (initialize on first iteration, then add).
-            if (loss_accumulator < 0) {
-                loss_accumulator = neg_log_prob;
-            }
-            else {
-                loss_accumulator = grad.value_add(loss_accumulator, neg_log_prob);
-            }
+            loss_accumulator = (loss_accumulator < 0)
+                ? neg_log_prob
+                : grad.value_add(loss_accumulator, neg_log_prob);
         }
 
         // Average the loss over all positions in the sequence.
-        int loss_node = grad.value_mul_const(loss_accumulator, 1.0 / num_positions);
+        int loss_node = grad.value_mul_const(loss_accumulator, 1.0 / seq_len);
 
         // Backward pass: compute gradients for all parameters.
         grad.backward(loss_node);
@@ -385,7 +366,7 @@ int main(void)
         // -------------------------------------------------------------------
         // Apply linear learning rate decay: lr decreases from base_lr to 0.
         float current_lr = base_learning_rate * (1.0f - (float)step / (float)num_training_steps);
-
+        optimizer.lr = current_lr;
         optimizer.step(checkpoint);
 
         // Log training progress and periodically evaluate validation loss.
@@ -405,7 +386,7 @@ int main(void)
                     step + 1, num_training_steps, train_loss, current_val_loss);
             }
             else {
-                std::printf("step %4d / %4d | train_loss %.4f\n",
+                std::printf("step %4d / %4d | train_loss %.4f\r",
                     step + 1, num_training_steps, train_loss);
             }
             std::fflush(stdout);
@@ -429,68 +410,60 @@ int main(void)
 
     for (int sample_idx = 0; sample_idx < 20; sample_idx++)
     {
-        // Restore parameters and reset the KV cache for each sample.
-        grad.restore_parameter_values(checkpoint.values);
-        model.reset_kv_cache();
+        // no KV cache, so we must re-run the whole prefix each step
+        std::array<int, MAX_NUM_TOKENS> seq;
+        int seq_len = 0;
+        seq[seq_len++] = g_token_bos;
 
-        // Start with the BOS token.
-        int current_token = g_token_bos;
-
-        // Buffer to store the generated characters.
         char generated_text[model.block_size + 1];
         int text_length = 0;
 
-        // Generate tokens one at a time, up to block_size positions.
         for (int pos = 0; pos < model.block_size; pos++)
         {
-            // Forward pass to get logits for the next token.
-            model.forward(grad, current_token, pos, logit_nodes);
+            // Restore parameters for each sample.
+            grad.restore_parameter_values(checkpoint.values);
 
-            // Apply temperature scaling: logits / temperature
-            // Lower temperature sharpens the distribution (more confident).
-            std::array <int,vocab_size> scaled_logits;
-            if (temperature > 0)
-            {
-                for (int i = 0; i < vocab_size; i++)
-                {
-                    scaled_logits[i] = grad.value_mul_const(logit_nodes[i], 1.0f / temperature);
-                }
-            }
+            // forward over current prefix
+            std::vector<std::array<NodeHandle, vocab_size> > logits(seq_len);
+            std::vector<std::span<NodeHandle> >              logit_spans(seq_len);
+            for (int t = 0; t < seq_len; t++)
+                logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
 
-            // Convert scaled logits to probabilities.
+            model.forward(grad,
+                std::span<const int>(seq.data(), seq_len),
+                std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+
+            // use the LAST position's logits to predict the next token
+            std::span<NodeHandle> last = logit_spans[seq_len - 1];
+
+            std::array<NodeHandle, vocab_size> scaled_logits;
+            for (int i = 0; i < vocab_size; i++)
+                scaled_logits[i] = grad.value_mul_const(last[i], 1.0f / temperature);
+
             SoftmaxLayer<float> softmax;
+            std::array<NodeHandle, vocab_size> prob_nodes;
             softmax.forward(grad, scaled_logits, prob_nodes);
 
-            // Sample the next token from the probability distribution.
-            // Use cumulative probability sampling.
-            float random_threshold = unif(rng);
-            float cumulative_prob = 0.0f;
-            int next_token = vocab_size - 1;  // Default to last token
-
+            float r = unif(rng), cum = 0.0f;
+            int next_token = vocab_size - 1;
             for (int i = 0; i < vocab_size; i++)
             {
-                cumulative_prob += grad.get(prob_nodes[i]).data;
-                if (random_threshold < cumulative_prob)
-                {
-                    next_token = i;
-                    break;
-                }
+                cum += grad.get(prob_nodes[i]).data;
+                if (r < cum) { next_token = i; break; }
             }
 
-            // If we sample the BOS token, treat it as the end of the sequence.
             if (next_token == g_token_bos) break;
+            generated_text[text_length++] = (char)next_token + 'a';
 
-            // Convert the token ID back to a character and append to the output.
-            generated_text[text_length++] = ((char)next_token) + 'a';
-
-            // The sampled token becomes the input for the next position.
-            current_token = next_token;
+            if (seq_len < MAX_NUM_TOKENS) seq[seq_len++] = next_token;
         }
 
         // Null-terminate and print the generated text.
         generated_text[text_length] = '\0';
         std::printf("sample %2d: %s\n", sample_idx + 1, generated_text);
     }
+
+    std::printf("pool high water mark: %d\n", (int)grad.high_water_mark());
 
     // -----------------------------------------------------------------------
     // PHASE 5: SAVE FINAL WEIGHTS

@@ -52,6 +52,7 @@ public:
     {
         pool.resize(capacity);
         pool_size = 0;
+        pool_high_water = 0;
     }
 
     NodeHandle allocate()
@@ -81,12 +82,18 @@ public:
 
     void reset()
     {
+        pool_high_water = std::max(pool_high_water, pool_size);
         pool_size = 0;
     }
 
-    int size()
+    size_t size() const
     {
         return pool_size;
+    }
+
+    size_t high_water_mark() const
+    {
+        return pool_high_water;
     }
 
     // careful holding on to the returned value because any value_* functions may cause the pool to reallocate and move
@@ -99,6 +106,7 @@ public:
     {
         assert(values.size() < pool.size()); // ensure init() was called with a sufficiently large value
 
+        pool_high_water = std::max(pool_high_water, pool_size);
         pool_size = values.size();
         for (int i = 0; i < values.size(); i++)
         {
@@ -368,6 +376,7 @@ public:
 private:
     std::vector<Node> pool; // this is just used as a heap allocated fixed sized array
     size_t pool_size{ 0 }; // actual dynamic value (for improved performance)
+    size_t pool_high_water{ 0 };
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<float> uniform{ 0, 1 };
     std::normal_distribution<float> gaussian{ 0, 1 };
