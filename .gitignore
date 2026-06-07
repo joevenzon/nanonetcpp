@@ -1,2 +1,7 @@
 build/
+out/
+.vs/
 *.exe
+*.chk
+*.pdb
+CMakeSettings.json

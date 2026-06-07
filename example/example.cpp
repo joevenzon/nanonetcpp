@@ -286,7 +286,11 @@ int main(void)
     // Each parameter is a leaf Value node in the pool.
     // Matrices are initialized with small Gaussian random values.
 
+    const size_t k_MB = 1024 * 1024;
     AutoGrad<float> grad;
+    // 20MB allocation for parameters
+    // run at least one training iteration in debug mode to see if you're going to run out of memory
+    grad.init(20 * k_MB);
 
     Model model;
     model.init(grad, vocab_size);
@@ -302,7 +306,7 @@ int main(void)
     // -----------------------------------------------------------------------
     // PHASE 3: TRAINING LOOP
     // -----------------------------------------------------------------------
-    const int    num_training_steps = 100000;
+    const int    num_training_steps = 10000;
     const float base_learning_rate = 0.01f;
     const float adam_beta1 = 0.9f;   // Exponential decay rate for the first moment
     const float adam_beta2 = 0.999f; // Exponential decay rate for the second moment

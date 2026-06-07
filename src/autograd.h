@@ -5,6 +5,7 @@
 #include <cmath>
 #include <random>
 #include <span>
+#include <cassert>
 
 #include "handle.h"
 
@@ -42,10 +43,16 @@ public:
     // =============================================================================
     // NODE POOL MANAGEMENT
     // =============================================================================
+    void init(size_t capacity)
+    {
+        pool.resize(capacity);
+        pool_size = 0;
+    }
+
     NodeHandle allocate()
     {
-        NodeHandle index = pool.size();
-        pool.resize(index+1); // allocate the node
+        NodeHandle index = pool_size;
+        pool_size++; // allocate the node
         return index; // return the index of the allocation
     }
 
@@ -56,7 +63,7 @@ public:
     // @return            Pool index of the first element (top-left corner)
     NodeHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev)
     {
-        NodeHandle start_offset = pool.size();
+        NodeHandle start_offset = pool_size;
         int total_elements = num_rows * num_cols;
         for (int k = 0; k < total_elements; k++)
         {
@@ -65,19 +72,14 @@ public:
         return start_offset;
     }
 
-    void reserve(size_t capacity)
-    {
-        pool.reserve(capacity);
-    }
-
     void reset()
     {
-        pool.clear();
+        pool_size = 0;
     }
 
     int size()
     {
-        return pool.size();
+        return pool_size;
     }
 
     // careful holding on to the returned value because any value_* functions may cause the pool to reallocate and move
@@ -88,7 +90,9 @@ public:
 
     void restore_parameter_values(const std::span <DataType> values)
     {
-        pool.resize(values.size());
+        assert(values.size() < pool.size()); // ensure init() was called with a sufficiently large value
+
+        pool_size = values.size();
         for (int i = 0; i < values.size(); i++)
         {
             get(NodeHandle(i)).data = values[i];
@@ -108,7 +112,7 @@ public:
         node.data = data;
         node.grad = 0.0f;
         node.n_children = 0;
-        return handle;  // Return the pool index of the new node
+        return handle;  // Return the index of the new node
     }
 
     // Create a constant (leaf) node. Alias for clarity.
@@ -325,9 +329,9 @@ public:
     void backward(NodeHandle root_index)
     {
         // Step 1: Reset all gradients to zero.
-        for (Node & node : pool)
+        for (int i = 0; i < pool_size; i++)
         {
-            node.grad = 0.0f;
+            pool[i].grad = 0.0f;
         }
 
         // Step 2: Seed the backward pass � the gradient of the loss with respect to itself is 1.
@@ -335,7 +339,7 @@ public:
         root_node.grad = 1.0f;
 
         // Step 3: Traverse the pool in reverse (reverse topological order).
-        for (int i = pool.size() - 1; i >= 0; i--)
+        for (int i = pool_size - 1; i >= 0; i--)
         {
             Node & node = get(i);
             const DataType incoming_grad = node.grad;
@@ -355,7 +359,8 @@ public:
     }
 
 private:
-    std::vector<Node> pool;
+    std::vector<Node> pool; // this is just used as a heap allocated fixed sized array
+    size_t pool_size; // actual dynamic value (for improved performance)
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<float> uniform{ 0, 1 };
     std::normal_distribution<float> gaussian{ 0, 1 };
