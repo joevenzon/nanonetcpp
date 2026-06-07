@@ -19,7 +19,7 @@ constexpr int vocab_size = 27; // (unique characters) + BOS token
 constexpr int MAX_NUM_DOCUMENTS = 40000;   // Maximum number of documents (names) to load
 constexpr int MAX_DOC_LENGTH = 32;      // Maximum length of a single document (in characters)
 constexpr int MAX_NUM_TOKENS = MAX_DOC_LENGTH + 4;  // Maximum tokens per document (doc + BOS tokens)
-constexpr float val_split_ratio = 0.05f;    // Fraction of data for validation
+constexpr float val_split_ratio = 0.01f;    // Fraction of data for validation
 
 // The dataset consists of a list of documents (names). The vocabulary is built
 // from the unique characters in the dataset, plus a special BOS (Beginning of
