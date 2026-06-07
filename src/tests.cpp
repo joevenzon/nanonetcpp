@@ -233,7 +233,7 @@ static void test_reset(AutoGrad<DataType> &ag)
 static void test_allocate_matrix(AutoGrad<DataType> &ag)
 {
     printf("test_allocate_matrix ... ");
-    NodeMatrixHandle matrix = ag.allocate_matrix(2, 3, 0.1f);
+    NodeMatrixHandle matrix = ag.allocate_matrix(2, 3, 0, 0.1f);
 
     // Quick sanity: nodes exist and have data in a reasonable range
     bool ok = true;

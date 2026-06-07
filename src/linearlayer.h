@@ -20,7 +20,7 @@ struct LinearLayer
 
 	void init(AutoGrad<DataType> & grad, int num_rows, int num_cols, DataType std_dev, const char * optional_name_hint = NULL)
 	{
-		parameters = grad.allocate_matrix(num_rows, num_cols, std_dev, optional_name_hint ? optional_name_hint : "linear");
+		parameters = grad.allocate_matrix(num_rows, num_cols, 0, std_dev, optional_name_hint ? optional_name_hint : "linear");
 	}
 
     // @param input_indices  Array of pool indices for the input vector

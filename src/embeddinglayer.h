@@ -26,7 +26,7 @@ struct EmbeddingLayer
     void init(AutoGrad<DataType> & grad, int num_embeddings, int emb_dim, DataType std_dev, const char * optional_name_hint = NULL)
     {
         this->emb_dim = emb_dim;
-        parameters = grad.allocate_matrix(num_embeddings, emb_dim, std_dev, optional_name_hint ? optional_name_hint : "embedding");
+        parameters = grad.allocate_matrix(num_embeddings, emb_dim, 0, std_dev, optional_name_hint ? optional_name_hint : "embedding");
     }
 
     // @param token_id       Integer index into the embedding table

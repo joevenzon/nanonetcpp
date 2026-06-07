@@ -77,13 +77,13 @@ public:
     // @param num_cols    Number of columns in the matrix
     // @param std_dev     Standard deviation for Gaussian initialization
     // @return            Pool index of the first element (top-left corner)
-    NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType std_dev, const char * optional_name_hint = NULL)
+    NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
         NodeHandle start_offset = pool_size;
         int total_elements = num_rows * num_cols;
         for (int k = 0; k < total_elements; k++)
         {
-            value_leaf(rand_gaussian(0, std_dev));
+            value_leaf(rand_gaussian(mean, std_dev));
         }
         NodeMatrixHandle result(start_offset, num_rows, num_cols);
         LeafMatrixRecord record;
