@@ -43,6 +43,8 @@ The example will:
 - Periodically report training and validation loss.
 - Generate 20 "hallucinated" names after training.
 
+Running 10,000 training steps for this 4,256 parameter neural network should take about 2 seconds.
+
 ## Architecture Overview
 
 ### AutoGrad Node Pool

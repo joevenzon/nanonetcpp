@@ -255,7 +255,7 @@ static void test_allocate_matrix(AutoGrad<DataType> &ag)
 // ---------------------------------------------------------------------------
 int main()
 {
-    printf("=== AutoGrad<DataType> Unit Tests ===\n\n");
+    printf("=== AutoGrad Unit Tests ===\n\n");
 
     AutoGrad<DataType> ag;
 

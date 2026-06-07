@@ -286,11 +286,9 @@ int main(void)
     // Each parameter is a leaf Value node in the pool.
     // Matrices are initialized with small Gaussian random values.
 
-    const size_t k_MB = 1024 * 1024;
     AutoGrad<float> grad;
-    // 20MB allocation for parameters
     // run at least one training iteration in debug mode to see if you're going to run out of memory
-    grad.init(20 * k_MB);
+    grad.init(1e6);
 
     Model model;
     model.init(grad, vocab_size);

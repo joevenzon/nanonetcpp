@@ -13,6 +13,11 @@ template <typename DataType>
 class AutoGrad
 {
 public:
+    AutoGrad()
+    {
+        pool.resize(100000);
+    }
+
     // =============================================================================
     // Node type
     // =============================================================================
@@ -51,6 +56,8 @@ public:
 
     NodeHandle allocate()
     {
+        assert(!pool.empty()); // make sure to call init() first
+
         NodeHandle index = pool_size;
         pool_size++; // allocate the node
         return index; // return the index of the allocation
@@ -360,7 +367,7 @@ public:
 
 private:
     std::vector<Node> pool; // this is just used as a heap allocated fixed sized array
-    size_t pool_size; // actual dynamic value (for improved performance)
+    size_t pool_size{ 0 }; // actual dynamic value (for improved performance)
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<float> uniform{ 0, 1 };
     std::normal_distribution<float> gaussian{ 0, 1 };
