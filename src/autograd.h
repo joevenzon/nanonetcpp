@@ -9,6 +9,7 @@
 #include <string>
 
 #include "handle.h"
+#include "arena.h"
 
 template <typename DataType>
 class AutoGrad
@@ -58,17 +59,14 @@ public:
     void init(size_t capacity)
     {
         pool.resize(capacity);
-        pool_size = 0;
-        pool_high_water = 0;
+        pool.reset();
         leaf_matrices.clear();
     }
 
     NodeHandle allocate()
     {
-        assert(!pool.empty()); // make sure to call init() first
-
-        NodeHandle index = pool_size;
-        pool_size++; // allocate the node
+        NodeHandle index = pool.size();
+        pool.allocate(1);
         return index; // return the index of the allocation
     }
 
@@ -79,7 +77,7 @@ public:
     // @return            Pool index of the first element (top-left corner)
     NodeMatrixHandle allocate_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
-        NodeHandle start_offset = pool_size;
+        NodeHandle start_offset = pool.size();
         int total_elements = num_rows * num_cols;
         for (int k = 0; k < total_elements; k++)
         {
@@ -95,23 +93,21 @@ public:
 
     void reset()
     {
-        pool_high_water = std::max(pool_high_water, pool_size);
-        pool_size = 0;
+        pool.reset();
     }
 
     size_t size() const
     {
-        return pool_size;
+        return pool.size();
     }
 
     size_t high_water_mark() const
     {
-        return pool_high_water;
+        return pool.high_water_mark();
     }
 
     std::span<const LeafMatrixRecord> get_leaf_matrices() const { return std::span<const LeafMatrixRecord>(leaf_matrices); }
 
-    // careful holding on to the returned value because any value_* functions may cause the pool to reallocate and move
     Node & get(NodeHandle index)
     {
         return pool[index];
@@ -119,10 +115,7 @@ public:
 
     void restore_parameter_values(const std::span <DataType> values)
     {
-        assert(values.size() < pool.size()); // ensure init() was called with a sufficiently large value
-
-        pool_high_water = std::max(pool_high_water, pool_size);
-        pool_size = values.size();
+        pool.reset_to(values.size());
         for (int i = 0; i < values.size(); i++)
         {
             get(NodeHandle(i)).data = values[i];
@@ -359,7 +352,7 @@ public:
     void backward(NodeHandle root_index)
     {
         // Step 1: Reset all gradients to zero.
-        for (int i = 0; i < pool_size; i++)
+        for (int i = 0; i < pool.size(); i++)
         {
             pool[i].grad = 0.0f;
         }
@@ -369,7 +362,7 @@ public:
         root_node.grad = 1.0f;
 
         // Step 3: Traverse the pool in reverse (reverse topological order).
-        for (int i = pool_size - 1; i >= 0; i--)
+        for (int i = pool.size() - 1; i >= 0; i--)
         {
             Node & node = get(i);
             const DataType incoming_grad = node.grad;
@@ -389,9 +382,7 @@ public:
     }
 
 private:
-    std::vector<Node> pool; // this is just used as a heap allocated fixed sized array
-    size_t pool_size{ 0 }; // actual dynamic value (for improved performance)
-    size_t pool_high_water{ 0 };
+    Arena<Node> pool; // this is just used as a heap allocated fixed sized array
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<float> uniform{ 0, 1 };
     std::normal_distribution<float> gaussian{ 0, 1 };
