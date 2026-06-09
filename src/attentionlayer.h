@@ -8,8 +8,7 @@
 template <typename DataType>
 struct AttentionLayer
 {
-    LinearLayer<DataType> wq, wk, wv;
-    std::vector<NodeMatrixHandle> wo_heads; // one per head: {head_dim, emb_dim}
+    LinearLayer<DataType> wq, wk, wv, wo;
     int emb_dim, num_heads, head_dim;
 
     void init(AutoGrad<DataType> & ag, int emb_dim, int num_heads)
@@ -22,14 +21,7 @@ struct AttentionLayer
         wq.init(ag, emb_dim, emb_dim, std, "wq");
         wk.init(ag, emb_dim, emb_dim, std, "wk");
         wv.init(ag, emb_dim, emb_dim, std, "wv");
-
-        wo_heads.resize(num_heads);
-        for (int h = 0; h < num_heads; h++)
-        {
-            char name[64];
-            snprintf(name, sizeof(name), "wo_%d", h);
-            wo_heads[h] = ag.allocate_parameter_matrix(head_dim, emb_dim, DataType(0), std, name);
-        }
+        wo.init(ag, emb_dim, emb_dim, std, "wo");
     }
 
     // Whole-sequence forward with causal masking.
@@ -43,18 +35,16 @@ struct AttentionLayer
         assert(n_input.tensor.get_shape().dims[1] == emb_dim);
 
         // -------------------------------------------------------------------
-        // STEP 1: PROJECT TO Q, K, V  —  single matmul each
+        // STEP 1: PROJECT TO Q, K, V (Standard Linear Projections)
         // -------------------------------------------------------------------
-        //   W: {emb_dim, emb_dim}, input: {seq_len, emb_dim}
-        //   value_matmul expects (M×K) @ (K×N), so swap order: input @ W
+        // input: {seq_len, emb_dim}, weights: {emb_dim, emb_dim} -> {seq_len, emb_dim}
         NodeHandle Q = ag.value_matmul(input, wq.parameters.start);
         NodeHandle K = ag.value_matmul(input, wk.parameters.start);
         NodeHandle V = ag.value_matmul(input, wv.parameters.start);
 
         // -------------------------------------------------------------------
-        // STEP 2: BUILD CAUSAL MASK (constant leaf, no backward_fn)
+        // STEP 2: BUILD CAUSAL MASK
         // -------------------------------------------------------------------
-        // TODO: cache this somewhere (though note size is variable based on seq_len)
         NodeHandle mask = ag.tensor_leaf({ seq_len, seq_len }, DataType(0));
         {
             const std::span <DataType> & mv = ag.get(mask).tensor.values();
@@ -64,33 +54,42 @@ struct AttentionLayer
         }
 
         // -------------------------------------------------------------------
-        // STEP 3: PER-HEAD ATTENTION + OUTPUT PROJECTION
+        // STEP 3: MULTI-HEAD ATTENTION (Concatenation Approach)
         // -------------------------------------------------------------------
         DataType scale = DataType(1.0) / std::sqrt(head_dim);
 
-        NodeHandle acc = {}; // set on first head, value_add'd for subsequent
+        // We create a "concatenated" buffer to hold the output of all heads side-by-side
+        // Shape: {seq_len, emb_dim} (since num_heads * head_dim == emb_dim)
+        NodeHandle concatenated = ag.tensor_leaf({ seq_len, emb_dim }, DataType(0));
+
         for (int h = 0; h < num_heads; h++)
         {
+            // Slice the large Q, K, V into head-specific chunks: {seq_len, head_dim}
             NodeHandle Q_h = ag.value_slice_cols(Q, h * head_dim, head_dim);
             NodeHandle K_h = ag.value_slice_cols(K, h * head_dim, head_dim);
             NodeHandle V_h = ag.value_slice_cols(V, h * head_dim, head_dim);
 
-            // scores = (Q_h @ K_h^T) * scale  —  {seq_len, seq_len}
+            // Scaled Dot-Product: (Q_h @ K_h^T) * scale -> {seq_len, seq_len}
             NodeHandle scores = ag.value_mul_const(
                 ag.value_matmul_bt(Q_h, K_h), scale);
 
-            // Causal mask + row-wise softmax
+            // Apply causal mask and row-wise softmax -> {seq_len, seq_len}
             NodeHandle weights = ag.value_softmax_rows(ag.value_add(scores, mask));
 
-            // weighted values: {seq_len, seq_len} @ {seq_len, head_dim} -> {seq_len, head_dim}
+            // Weighted values: {seq_len, seq_len} @ {seq_len, head_dim} -> {seq_len, head_dim}
             NodeHandle head_out = ag.value_matmul(weights, V_h);
 
-            // project to emb_dim: {seq_len, head_dim} @ {head_dim, emb_dim} -> {seq_len, emb_dim}
-            NodeHandle contrib = ag.value_matmul(head_out, wo_heads[h].start);
-
-            acc = (h == 0) ? contrib : ag.value_add(acc, contrib);
+            // Place this head's output into its dedicated slot in the concatenated matrix.
+            // concatenated: {seq_len, emb_dim}, head_out: {seq_len, head_dim}, start_col: h * head_dim
+            concatenated = ag.value_scatter_cols(concatenated, head_out, h * head_dim);
         }
 
-        return acc;
+        // -------------------------------------------------------------------
+        // STEP 4: FINAL OUTPUT PROJECTION
+        // -------------------------------------------------------------------
+        // In a standard Transformer, the concatenated heads are projected 
+        // through one final weight matrix W_O.
+        // {seq_len, emb_dim} @ {emb_dim, emb_dim} -> {seq_len, emb_dim}
+        return wo.forward(ag, concatenated);
     }
 };

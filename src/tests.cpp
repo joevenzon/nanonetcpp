@@ -413,6 +413,37 @@ static void test_scatter_row(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// value_scatter_cols --------------------------------------------------------
+static void test_scatter_cols(AutoGrad<DataType> &ag)
+{
+    printf("test_scatter_cols ... ");
+    // dst: 2x4 matrix {{1,1,1,1},{1,1,1,1}}
+    NodeHandle dst = ag.tensor_leaf({2, 4}, 1.0f);
+    // src: 2x2 matrix {{10,20},{30,40}}
+    NodeHandle src = ag.tensor_leaf({2, 2});
+    DataType *sv = ag.get(src).tensor.values().data();
+    sv[0] = 10; sv[1] = 20; sv[2] = 30; sv[3] = 40;
+
+    NodeHandle out = ag.value_scatter_cols(dst, src, 1);  // scatter src into cols 1-2
+    // Row 0: {1, 10, 20, 1}
+    ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[0], "row 0 col 0 unchanged");
+    ASSERT_FLOAT_EQ(10.0f, ag.get(out).tensor.values()[1], "row 0 col 1 overwritten");
+    ASSERT_FLOAT_EQ(20.0f, ag.get(out).tensor.values()[2], "row 0 col 2 overwritten");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[3], "row 0 col 3 unchanged");
+    // Row 1: {1, 30, 40, 1}
+    ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[4], "row 1 col 0 unchanged");
+    ASSERT_FLOAT_EQ(30.0f, ag.get(out).tensor.values()[5], "row 1 col 1 overwritten");
+    ASSERT_FLOAT_EQ(40.0f, ag.get(out).tensor.values()[6], "row 1 col 2 overwritten");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[7], "row 1 col 3 unchanged");
+
+    ag.backward(out);
+    ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[0], "src grad[0] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[1], "src grad[1] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[2], "src grad[2] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[3], "src grad[3] == 1");
+    printf("\n");
+}
+
 // value_matmul --------------------------------------------------------------
 static void test_matmul(AutoGrad<DataType> &ag)
 {
@@ -1107,6 +1138,9 @@ int main()
     ag.reset();
 
     test_scatter_row(ag);
+    ag.reset();
+
+    test_scatter_cols(ag);
     ag.reset();
 
     test_matmul(ag);

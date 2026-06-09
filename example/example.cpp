@@ -294,6 +294,8 @@ int main(void)
 
         std::array<int, MAX_NUM_TOKENS> token_sequence;
         int num_tokens = 0;
+        for (int & t : token_sequence)
+            t = g_token_bos;
         token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
         for (int i = 0; i < doc_length; i++)
         {
@@ -313,7 +315,7 @@ int main(void)
         NodeHandle probs = grad.value_softmax_rows(logits);
 
         // Accumulate loss over all positions
-        int loss_accumulator = -1;
+        NodeHandle loss_accumulator = -1;
 
         for (int pos = 0; pos < seq_len; pos++)
         {

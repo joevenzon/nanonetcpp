@@ -832,11 +832,18 @@ public:
     {
         const int row_index = out.backward_scratch_int[0];
         const int num_cols = out.tensor.get_shape().dims[1];
+        const int M = out.tensor.get_shape().dims[0];
 
         const DataType * go = out.tensor.gradients().data();
-        DataType * gs = g.get(out.children[1]).tensor.gradients().data();
+        DataType * gd = g.get(out.children[0]).tensor.gradients().data(); // dst
+        DataType * gs = g.get(out.children[1]).tensor.gradients().data(); // src
 
-        for (int c = 0; c < num_cols; c++) gs[c] += go[row_index * num_cols + c];
+        // dst grad = out grad everywhere EXCEPT the overwritten row
+        for (int i = 0; i < M * num_cols; i++) gd[i] += go[i];
+        for (int c = 0; c < num_cols; c++) {
+            gd[row_index * num_cols + c] -= go[row_index * num_cols + c]; // remove overwritten row
+            gs[c] += go[row_index * num_cols + c];
+        }
     }
 
     NodeHandle value_scatter_row(NodeHandle dst, NodeHandle src, int row_index)
@@ -867,6 +874,69 @@ public:
         for (int c = 0; c < num_cols; c++) po[row_index * num_cols + c] = ps[c];
 
         node.backward_fn = &AutoGrad<DataType>::bwd_scatter_row;
+
+        return h;
+    }
+
+    // =============================================================================
+    // SCATTER COLS: copy `src` ({M, K}) into `dst` ({M, N}) starting at column `col_start`
+    //   Forward:  dst[:, col_start : col_start+K] = src
+    //   Backward: d_src += d_dst[:, col_start : col_start+K]
+    // =============================================================================
+    static void bwd_scatter_cols(AutoGrad<DataType> & g, const Node & out)
+    {
+        const int col_start = out.backward_scratch_int[0];
+        const int K = out.backward_scratch_int[1];
+        const int M = out.tensor.get_shape().dims[0];
+        const int N = out.tensor.get_shape().dims[1];
+
+        const DataType * go = out.tensor.gradients().data();
+        DataType * gd = g.get(out.children[0]).tensor.gradients().data(); // dst
+        DataType * gs = g.get(out.children[1]).tensor.gradients().data(); // src
+
+        for (int m = 0; m < M; m++)
+            for (int c = 0; c < N; c++)
+            {
+                const bool overwritten = (c >= col_start && c < col_start + K);
+                const DataType g_out = go[m * N + c];
+                if (overwritten)
+                    gs[m * K + (c - col_start)] += g_out; // goes to src
+                else
+                    gd[m * N + c] += g_out;                // goes to dst
+            }
+    }
+
+    NodeHandle value_scatter_cols(NodeHandle dst, NodeHandle src, int col_start)
+    {
+        const Node & nd = get(dst);
+        const Node & ns = get(src);
+        assert(nd.tensor.get_shape().rank() == 2);
+        assert(ns.tensor.get_shape().rank() == 2);
+        const int M = nd.tensor.get_shape().dims[0];
+        const int N = nd.tensor.get_shape().dims[1];
+        const int K = ns.tensor.get_shape().dims[1];
+        assert(ns.tensor.get_shape().dims[0] == M);
+        assert(col_start >= 0 && col_start + K <= N);
+
+        NodeHandle h = allocate_node(TensorShape{ M, N });
+        Node & node = get(h);
+
+        node.children.push_back(dst);
+        node.children.push_back(src);
+        node.backward_scratch_int[0] = col_start;
+        node.backward_scratch_int[1] = K;
+
+        const DataType * pd = nd.tensor.values().data();
+        const DataType * ps = ns.tensor.values().data();
+        DataType * po = node.tensor.values().data();
+
+        // Copy dst
+        for (int i = 0; i < M * N; i++) po[i] = pd[i];
+        // Overwrite columns [col_start, col_start+K) with src
+        for (int m = 0; m < M; m++)
+            for (int c = 0; c < K; c++) po[m * N + col_start + c] = ps[m * K + c];
+
+        node.backward_fn = &AutoGrad<DataType>::bwd_scatter_cols;
 
         return h;
     }
