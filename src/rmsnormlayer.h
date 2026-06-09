@@ -24,39 +24,40 @@ struct SimpleRMSNormLayer
 {
     DataType epsilon = 1e-5f;
 
-    // @param input_indices  Array of pool indices for the inputs
-    // @param output_indices Array to receive pool indices for the softmax output
-    void forward(
-        AutoGrad<DataType> & grad,
-        const std::span <NodeHandle> input_indices,
-        std::span <NodeHandle> output_indices)
+    // `input` is a tensor node of shape {dim} (rank-1) or {M, dim} (rank-2).
+    // Returns the normalized output tensor node of the same shape.
+    //
+    // Each row is normalized independently: out[i] = x[i] * (mean(x[i]^2) + epsilon)^(-0.5)
+    NodeHandle forward(AutoGrad<DataType> & grad, NodeHandle input)
     {
-        if (input_indices.empty()) return;
+        const auto & nin = grad.get(input);
+        const int rank = nin.tensor.get_shape().rank();
 
-        // Assert input and output sizes match
-        assert(input_indices.size() == output_indices.size());
-
-        // Step 1: Compute sum of squares: sum(x[i]^2)
-        NodeHandle sum_of_squares = grad.value_mul(input_indices[0], input_indices[0]);
-        for (int i = 1; i < input_indices.size(); i++)
+        if (rank == 1)
         {
-            NodeHandle square = grad.value_mul(input_indices[i], input_indices[i]);
-            sum_of_squares = grad.value_add(sum_of_squares, square);
+            // Single vector: use scalar ops
+            const int dim = nin.tensor.numel();
+
+            NodeHandle squares = grad.value_mul(input, input);
+            NodeHandle sum_sq = grad.value_sum(squares);
+            NodeHandle mean_sq = grad.value_div_const(sum_sq, DataType(dim));
+            NodeHandle mean_eps = grad.value_add_const(mean_sq, epsilon);
+            NodeHandle scale_factor = grad.value_pow(mean_eps, DataType(-0.5));
+
+            return grad.value_mul_scalar(input, scale_factor);
         }
-
-        // Step 2: Compute mean of squares: mean(x^2) = sum(x^2) / dim
-        NodeHandle mean_of_squares = grad.value_div(sum_of_squares, grad.value_const(input_indices.size()));
-
-        // Step 3: Add epsilon for numerical stability: mean(x^2) + epsilon
-        NodeHandle mean_with_eps = grad.value_add_const(mean_of_squares, epsilon);
-
-        // Step 4: Compute scale factor: (mean(x^2) + epsilon)^(-0.5)
-        NodeHandle scale_factor = grad.value_pow(mean_with_eps, -0.5f);
-
-        // Step 5: Scale each input element by the scale factor.
-        for (int i = 0; i < input_indices.size(); i++)
+        else
         {
-            output_indices[i] = grad.value_mul(input_indices[i], scale_factor);
+            // Batch of rows: use row-wise ops
+            const int dim = nin.tensor.get_shape().dims[1];
+
+            NodeHandle squares = grad.value_mul(input, input);
+            NodeHandle sum_rows = grad.value_sum_rows(squares);
+            NodeHandle mean_rows = grad.value_div_const(sum_rows, DataType(dim));
+            NodeHandle mean_eps = grad.value_add_const(mean_rows, epsilon);
+            NodeHandle scale_factor = grad.value_pow(mean_eps, DataType(-0.5));
+
+            return grad.value_scale_rows(input, scale_factor);
         }
     }
 };
@@ -71,48 +72,53 @@ struct RMSNormLayer
 
     void init(AutoGrad<DataType> & grad, int dim, DataType std_dev, const char * optional_name_hint = NULL)
     {
-        gamma = grad.allocate_matrix(dim, 1, 1, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_gamma");
-        beta = grad.allocate_matrix(dim, 1, 0, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_beta");
+        gamma = grad.allocate_parameter_vector(dim, 1, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_gamma");
+        beta = grad.allocate_parameter_vector(dim, 0, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_beta");
     }
 
-    // @param input_indices  Array of pool indices for the inputs
-    // @param output_indices Array to receive pool indices for the output
-    void forward(
-        AutoGrad<DataType> & grad,
-        const std::span <NodeHandle> input_indices,
-        std::span <NodeHandle> output_indices)
+    // `input` is a tensor node of shape {dim} (rank-1) or {M, dim} (rank-2).
+    // Returns the normalized + affine-transformed output tensor node of the same shape.
+    //
+    // Each row is normalized independently, then gamma/beta are applied per-element:
+    //   out[i] = gamma * (x[i] / rms(x[i])) + beta
+    NodeHandle forward(AutoGrad<DataType> & grad, NodeHandle input)
     {
-        if (input_indices.empty())
-            return;
+        const auto & nin = grad.get(input);
+        const int rank = nin.tensor.get_shape().rank();
 
-        // Assert dimension compatibility: input/output must match gamma and beta dimensions
-        assert((int)input_indices.size() == gamma.rows);
-        assert((int)output_indices.size() == gamma.rows);
-        assert(input_indices.size() == output_indices.size());
-
-        // Step 1: Compute sum of squares: sum(x[i]^2)
-        NodeHandle sum_of_squares = grad.value_mul(input_indices[0], input_indices[0]);
-        for (int i = 1; i < (int)input_indices.size(); i++)
+        if (rank == 1)
         {
-            NodeHandle square = grad.value_mul(input_indices[i], input_indices[i]);
-            sum_of_squares = grad.value_add(sum_of_squares, square);
+            // Single vector: use scalar ops
+            const int dim = nin.tensor.numel();
+
+            NodeHandle squares = grad.value_mul(input, input);
+            NodeHandle sum_sq = grad.value_sum(squares);
+            NodeHandle mean_sq = grad.value_div_const(sum_sq, DataType(dim));
+            NodeHandle mean_eps = grad.value_add_const(mean_sq, epsilon);
+            NodeHandle scale_factor = grad.value_pow(mean_eps, DataType(-0.5));
+            NodeHandle normalized = grad.value_mul_scalar(input, scale_factor);
+
+            // Affine transform: gamma * normalized + beta
+            NodeHandle scaled = grad.value_mul(normalized, gamma.start);
+            return grad.value_add(scaled, beta.start);
         }
-
-        // Step 2: Compute mean of squares: mean(x^2) = sum(x^2) / dim
-        NodeHandle mean_of_squares = grad.value_div(sum_of_squares, grad.value_const((float)input_indices.size()));
-
-        // Step 3: Add epsilon for numerical stability: mean(x^2) + epsilon
-        NodeHandle mean_with_eps = grad.value_add_const(mean_of_squares, epsilon);
-
-        // Step 4: Compute scale factor: (mean(x^2) + epsilon)^(-0.5)
-        NodeHandle rms_inv = grad.value_pow(mean_with_eps, -0.5f);
-
-        // Step 5: Normalize, then apply per-element affine transform: gamma * x_norm + beta
-        for (int i = 0; i < (int)input_indices.size(); i++)
+        else
         {
-            NodeHandle normalized = grad.value_mul(input_indices[i], rms_inv);
-            NodeHandle scaled = grad.value_mul(normalized, gamma.get(i));
-            output_indices[i] = grad.value_add(scaled, beta.get(i));
+            // Batch of rows: use row-wise ops
+            const int dim = nin.tensor.get_shape().dims[1];
+
+            NodeHandle squares = grad.value_mul(input, input);
+            NodeHandle sum_rows = grad.value_sum_rows(squares);
+            NodeHandle mean_rows = grad.value_div_const(sum_rows, DataType(dim));
+            NodeHandle mean_eps = grad.value_add_const(mean_rows, epsilon);
+            NodeHandle scale_factor = grad.value_pow(mean_eps, DataType(-0.5));
+            NodeHandle normalized = grad.value_scale_rows(input, scale_factor);
+
+            // Affine transform: gamma * normalized + beta
+            // gamma.start and beta.start are nodes of shape {dim} (from allocate_parameter_vector).
+            // Broadcast them across each row.
+            NodeHandle scaled = grad.value_mul_rows(normalized, gamma.start);
+            return grad.value_add_rows(scaled, beta.start);
         }
     }
 };

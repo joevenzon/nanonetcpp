@@ -126,6 +126,7 @@ struct Model
     EmbeddingLayer<float> wte;
     EmbeddingLayer<float> wpe;
     SimpleRMSNormLayer<float> embed_norm;
+    SimpleRMSNormLayer<float> final_norm;
     LinearLayer<float> lm_head;
     std::vector<TransformerBlock<float> > transformer;
 
@@ -133,7 +134,7 @@ struct Model
     {
         wte.init(grad, vocab_size, emb_dim, std_dev, "wte");
         wpe.init(grad, block_size, emb_dim, std_dev, "wtp");
-        lm_head.init(grad, vocab_size, emb_dim, std_dev, "lm_head");
+        lm_head.init(grad, emb_dim, vocab_size, std_dev, "lm_head");
 
         transformer.resize(num_layers);
         for (int li = 0; li < num_layers; li++)
@@ -142,52 +143,34 @@ struct Model
 
     // Whole-sequence forward.
     // tokens     : seq_len token ids (positions 0..seq_len-1)
-    // out_logits : seq_len spans, each of size vocab_size, written here
-    void forward(
-        AutoGrad<float> & grad,
-        std::span<const int> tokens,
-        std::span<std::span<NodeHandle> > out_logits)
+    // returns    : logits tensor of shape {seq_len, vocab_size}
+    NodeHandle forward(AutoGrad<float> & grad, std::span<const int> tokens)
     {
         int seq_len = (int)tokens.size();
-        assert((int)out_logits.size() == seq_len);
 
-        // --- STEP 1: token + position embedding, then RMSNorm (per position) ---
-        std::vector<std::array<NodeHandle, emb_dim> > normed(seq_len);
-        std::vector<std::span<NodeHandle> >           normed_spans(seq_len);
+        // --- STEP 1: token + position embedding, scatter into {seq_len, emb_dim} ---
+        NodeHandle embedded = grad.tensor_leaf({ seq_len, emb_dim }, float(0));
 
         for (int t = 0; t < seq_len; t++)
         {
-            std::array<NodeHandle, emb_dim> token_embedded, pos_embedded, embedded;
-            wte.forward(grad, tokens[t], token_embedded);
-            wpe.forward(grad, t, pos_embedded);
-
-            for (int j = 0; j < emb_dim; j++)
-                embedded[j] = grad.value_add(token_embedded[j], pos_embedded[j]);
-
-            embed_norm.forward(grad, embedded, normed[t]);
-            normed_spans[t] = std::span<NodeHandle>(normed[t].data(), emb_dim);
+            NodeHandle tok_emb = wte.forward(grad, tokens[t]);   // {emb_dim}
+            NodeHandle pos_emb = wpe.forward(grad, t);           // {emb_dim}
+            NodeHandle summed  = grad.value_add(tok_emb, pos_emb); // {emb_dim}
+            NodeHandle normed  = embed_norm.forward(grad, summed); // {emb_dim}
+            embedded = grad.value_scatter_row(embedded, normed, t); // {seq_len, emb_dim}
         }
 
-        // --- STEP 2: transformer layers (whole sequence) ---
-        std::vector<std::array<NodeHandle, emb_dim>> hidden(seq_len);
-        std::vector<std::span<NodeHandle>>           hidden_spans(seq_len);
-        for (int t = 0; t < seq_len; t++)
-            hidden_spans[t] = std::span<NodeHandle>(hidden[t].data(), emb_dim);
-
-        // ping-pong buffers between layers
-        std::span<const std::span<NodeHandle>> layer_in(normed_spans.data(), seq_len);
-        std::span<std::span<NodeHandle>>       layer_out(hidden_spans.data(), seq_len);
-
+        // --- STEP 2: transformer layers ---
+        NodeHandle hidden = embedded;
         for (int li = 0; li < num_layers; li++)
-        {
-            transformer[li].forward(grad, layer_in, layer_out);
-            // after first layer, feed hidden back in as input
-            layer_in = std::span<const std::span<NodeHandle>>(hidden_spans.data(), seq_len);
-        }
+            hidden = transformer[li].forward(grad, hidden);
 
-        // --- STEP 3: lm head per position ---
-        for (int t = 0; t < seq_len; t++)
-            lm_head.forward(grad, hidden_spans[t], out_logits[t]);
+        // --- STEP 3: lm head hidden @ W -> {seq_len, vocab_size} ---
+        // lm_head.parameters is {emb_dim, vocab_size}, hidden is {seq_len, emb_dim}
+        NodeHandle final_hidden = final_norm.forward(grad, hidden);
+        NodeHandle logits = lm_head.forward(grad, final_hidden);
+
+        return logits;
     }
 };
 
@@ -197,7 +180,6 @@ float compute_validation_loss(
     ParameterCheckpoint<float> & checkpoint,
     AutoGrad<float> & grad, Model & model)
 {
-    SoftmaxLayer<float> softmax_layer;
     float total_loss = 0.0f;
     int total_positions = 0;
 
@@ -208,7 +190,7 @@ float compute_validation_loss(
         const char * current_doc = g_documents[g_val_indices[doc_idx]];
         int doc_length = (int)std::strlen(current_doc);
 
-        grad.restore_parameter_values(checkpoint.values);
+        grad.restore_parameter_values(checkpoint.values, checkpoint.grads);
 
         int num_tokens = 0;
         token_sequence[num_tokens++] = g_token_bos;
@@ -219,25 +201,22 @@ float compute_validation_loss(
         int seq_len = num_tokens - 1;          // we predict tokens 1..num_tokens-1
         if (seq_len > model.block_size) seq_len = model.block_size;
 
-        // logits buffer: seq_len x vocab_size
-        std::vector<std::array<NodeHandle, vocab_size> > logits(seq_len);
-        std::vector<std::span<NodeHandle> >              logit_spans(seq_len);
-        for (int t = 0; t < seq_len; t++)
-            logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
+        // Forward: logits shape {seq_len, vocab_size}
+        NodeHandle logits = model.forward(grad,
+            std::span<const int>(token_sequence.data(), seq_len));
 
-        model.forward(grad,
-            std::span<const int>(token_sequence.data(), seq_len),
-            std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+        // Row-wise softmax -> probabilities {seq_len, vocab_size}
+        NodeHandle probs = grad.value_softmax_rows(logits);
 
-        std::array<NodeHandle, vocab_size> prob_nodes;
+        const float * pvals = grad.get(probs).tensor.values().data();
+
         for (int pos = 0; pos < seq_len; pos++)
         {
             int target_token = token_sequence[pos + 1];
-            softmax_layer.forward(grad, logit_spans[pos], prob_nodes);
-
-            float prob = grad.get(prob_nodes[target_token]).data;
-            if (prob < 1e-7f) prob = 1e-7f;
-            total_loss -= std::log(prob);
+            int flat_idx = pos * vocab_size + target_token;
+            float p = pvals[flat_idx];
+            if (p < 1e-7f) p = 1e-7f;
+            total_loss -= std::log(p);
             total_positions++;
         }
     }
@@ -276,10 +255,11 @@ int main(void)
 
     AutoGrad<float> grad;
     // run at least one training iteration in debug mode to see if you're going to run out of memory
-    grad.init(1e6);
+    grad.init(8192, 1e6);
 
     Model model;
     model.init(grad, vocab_size);
+    grad.snapshot_parameters();
 
     AdamOptimizer<float> optimizer;
 
@@ -287,7 +267,7 @@ int main(void)
     // persistent storage in the checkpoint
     ParameterCheckpoint<float> checkpoint;
     checkpoint.init(grad);
-    
+
     std::printf("num params: %d\n", (int)checkpoint.size());
 
     float initial_val_loss = compute_validation_loss(checkpoint, grad, model);
@@ -299,24 +279,23 @@ int main(void)
     const int    num_training_steps = 10000;
     const float base_learning_rate = 0.005f;
 
-    // Buffers for tokens, logits, and probabilities.
-    std::array <NodeHandle, MAX_NUM_TOKENS> token_sequence;
+    // Buffers for tokens.
     std::array <NodeHandle, vocab_size> logit_nodes;
-    std::array <NodeHandle, vocab_size> prob_nodes;
 
     for (int step = 0; step < num_training_steps; step++)
     {
         // Restore parameter values into the pool (pool is rebuilt each step).
-        grad.restore_parameter_values(checkpoint.values);
+        grad.restore_parameter_values(checkpoint.values, checkpoint.grads);
 
         // Select a document from the training set and tokenize it.
         // Tokens are surrounded by BOS tokens on both sides.
         const char * current_doc = g_documents[g_train_indices[step % g_num_train]];
         int doc_length = (int)std::strlen(current_doc);
-        
+
+        std::array<int, MAX_NUM_TOKENS> token_sequence;
         int num_tokens = 0;
         token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
-        for (int i = 0; i < doc_length; i++) 
+        for (int i = 0; i < doc_length; i++)
         {
             token_sequence[num_tokens++] = char_to_token_id(current_doc[i]);
         }
@@ -326,29 +305,24 @@ int main(void)
         int seq_len = num_tokens - 1;
         if (seq_len > model.block_size) seq_len = model.block_size;
 
-        // logits: seq_len x vocab_size
-        std::vector<std::array<NodeHandle, vocab_size>> logits(seq_len);
-        std::vector<std::span<NodeHandle>>              logit_spans(seq_len);
-        for (int t = 0; t < seq_len; t++)
-            logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
+        // SINGLE whole-sequence forward pass -> logits {seq_len, vocab_size}
+        NodeHandle logits = model.forward(grad,
+            std::span<const int>(token_sequence.data(), seq_len));
 
-        // SINGLE whole-sequence forward pass
-        model.forward(grad,
-            std::span<const int>(token_sequence.data(), seq_len),
-            std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+        // Row-wise softmax -> probabilities {seq_len, vocab_size}
+        NodeHandle probs = grad.value_softmax_rows(logits);
 
         // Accumulate loss over all positions
-        SoftmaxLayer<float> softmax_layer;
-        std::array<NodeHandle, vocab_size> prob_nodes;
         int loss_accumulator = -1;
 
         for (int pos = 0; pos < seq_len; pos++)
         {
             int target_token = token_sequence[pos + 1];
-            softmax_layer.forward(grad, logit_spans[pos], prob_nodes);
+            int flat_idx = pos * vocab_size + target_token;
+            NodeHandle prob = grad.value_select_element(probs, flat_idx);
 
-            int neg_log_prob = grad.value_mul_const(
-                grad.value_log(prob_nodes[target_token]), -1);
+            NodeHandle neg_log_prob = grad.value_mul_const(
+                grad.value_log(prob), -1);
 
             loss_accumulator = (loss_accumulator < 0)
                 ? neg_log_prob
@@ -356,7 +330,7 @@ int main(void)
         }
 
         // Average the loss over all positions in the sequence.
-        int loss_node = grad.value_mul_const(loss_accumulator, 1.0 / seq_len);
+        int loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
 
         // Backward pass: compute gradients for all parameters.
         grad.backward(loss_node);
@@ -374,7 +348,7 @@ int main(void)
 
         // Log training progress and periodically evaluate validation loss.
         float current_val_loss = 0.0f;
-        float train_loss = grad.get(loss_node).data;
+        float train_loss = grad.get(loss_node).tensor.values().data()[0];
         bool do_print = ((step + 1) % log_interval == 0 || step == num_training_steps - 1);
         bool do_val = ((step + 1) % val_interval == 0 || step == num_training_steps - 1);
 
@@ -424,34 +398,28 @@ int main(void)
         for (int pos = 0; pos < model.block_size; pos++)
         {
             // Restore parameters for each sample.
-            grad.restore_parameter_values(checkpoint.values);
+            grad.restore_parameter_values(checkpoint.values, checkpoint.grads);
 
-            // forward over current prefix
-            std::vector<std::array<NodeHandle, vocab_size> > logits(seq_len);
-            std::vector<std::span<NodeHandle> >              logit_spans(seq_len);
-            for (int t = 0; t < seq_len; t++)
-                logit_spans[t] = std::span<NodeHandle>(logits[t].data(), vocab_size);
+            // forward over current prefix -> logits {seq_len, vocab_size}
+            NodeHandle logits = model.forward(grad,
+                std::span<const int>(seq.data(), seq_len));
 
-            model.forward(grad,
-                std::span<const int>(seq.data(), seq_len),
-                std::span<std::span<NodeHandle>>(logit_spans.data(), seq_len));
+            // Extract the LAST position's logits: select row (seq_len-1) -> {vocab_size}
+            NodeHandle last_logits = grad.value_select_row(logits, seq_len - 1);
 
-            // use the LAST position's logits to predict the next token
-            std::span<NodeHandle> last = logit_spans[seq_len - 1];
+            // Scale by temperature
+            NodeHandle scaled = grad.value_mul_const(last_logits, 1.0f / temperature);
 
-            std::array<NodeHandle, vocab_size> scaled_logits;
-            for (int i = 0; i < vocab_size; i++)
-                scaled_logits[i] = grad.value_mul_const(last[i], 1.0f / temperature);
-
+            // Softmax -> probabilities {vocab_size}
             SoftmaxLayer<float> softmax;
-            std::array<NodeHandle, vocab_size> prob_nodes;
-            softmax.forward(grad, scaled_logits, prob_nodes);
+            NodeHandle probs = softmax.forward(grad, scaled);
 
             float r = unif(rng), cum = 0.0f;
             int next_token = vocab_size - 1;
+            const float * pvals = grad.get(probs).tensor.values().data();
             for (int i = 0; i < vocab_size; i++)
             {
-                cum += grad.get(prob_nodes[i]).data;
+                cum += pvals[i];
                 if (r < cum) { next_token = i; break; }
             }
 
@@ -466,7 +434,8 @@ int main(void)
         std::printf("sample %2d: %s\n", sample_idx + 1, generated_text);
     }
 
-    std::printf("pool high water mark: %d\n", (int)grad.high_water_mark());
+    std::printf("node pool high water mark: %d\n", (int)grad.node_high_water_mark());
+    std::printf("value arena high water mark: %d\n", (int)grad.value_high_water_mark());
 
     // -----------------------------------------------------------------------
     // PHASE 5: SAVE FINAL WEIGHTS

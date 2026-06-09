@@ -1,7 +1,6 @@
 #pragma once
 
 #include "autograd.h"
-#include "softmaxlayer.h"
 
 #include <cassert>
 #include <vector>
@@ -9,8 +8,8 @@
 template <typename DataType>
 struct AttentionLayer
 {
-    LinearLayer<DataType> wq, wk, wv, wo;
-    SoftmaxLayer<DataType> softmax;
+    LinearLayer<DataType> wq, wk, wv;
+    std::vector<NodeMatrixHandle> wo_heads; // one per head: {head_dim, emb_dim}
     int emb_dim, num_heads, head_dim;
 
     void init(AutoGrad<DataType> & ag, int emb_dim, int num_heads)
@@ -23,102 +22,75 @@ struct AttentionLayer
         wq.init(ag, emb_dim, emb_dim, std, "wq");
         wk.init(ag, emb_dim, emb_dim, std, "wk");
         wv.init(ag, emb_dim, emb_dim, std, "wv");
-        wo.init(ag, emb_dim, emb_dim, std, "wo");
+
+        wo_heads.resize(num_heads);
+        for (int h = 0; h < num_heads; h++)
+        {
+            char name[64];
+            snprintf(name, sizeof(name), "wo_%d", h);
+            wo_heads[h] = ag.allocate_parameter_matrix(head_dim, emb_dim, DataType(0), std, name);
+        }
     }
 
     // Whole-sequence forward with causal masking.
-    // input[t]  : sequence of emb_dim node handles for token t
-    // output[t] : sequence of emb_dim node handles to write for token t
-    void forward(AutoGrad<DataType> & ag,
-        std::span<const std::span<NodeHandle> > input,
-        std::span<std::span<NodeHandle> > output)
+    // input : tensor node of shape {seq_len, emb_dim}
+    // returns: tensor node of shape {seq_len, emb_dim}
+    NodeHandle forward(AutoGrad<DataType> & ag, NodeHandle input)
     {
-        int seq_len = (int)input.size();
-        assert((int)output.size() == seq_len);
+        const AutoGrad<DataType>::Node & n_input = ag.get(input);
+        assert(n_input.tensor.get_shape().rank() == 2);
+        int seq_len = n_input.tensor.get_shape().dims[0];
+        assert(n_input.tensor.get_shape().dims[1] == emb_dim);
 
         // -------------------------------------------------------------------
-        // STEP 1: PROJECT EVERY POSITION TO Q, K, V (all live graph nodes)
+        // STEP 1: PROJECT TO Q, K, V  —  single matmul each
         // -------------------------------------------------------------------
-        // q[t], k[t], v[t] each hold emb_dim node handles.
-        std::vector<std::vector<NodeHandle> > q(seq_len), k(seq_len), v(seq_len);
-        for (int t = 0; t < seq_len; t++)
+        //   W: {emb_dim, emb_dim}, input: {seq_len, emb_dim}
+        //   value_matmul expects (M×K) @ (K×N), so swap order: input @ W
+        NodeHandle Q = ag.value_matmul(input, wq.parameters.start);
+        NodeHandle K = ag.value_matmul(input, wk.parameters.start);
+        NodeHandle V = ag.value_matmul(input, wv.parameters.start);
+
+        // -------------------------------------------------------------------
+        // STEP 2: BUILD CAUSAL MASK (constant leaf, no backward_fn)
+        // -------------------------------------------------------------------
+        // TODO: cache this somewhere (though note size is variable based on seq_len)
+        NodeHandle mask = ag.tensor_leaf({ seq_len, seq_len }, DataType(0));
         {
-            assert((int)input[t].size() == emb_dim);
-            q[t].resize(emb_dim);
-            k[t].resize(emb_dim);
-            v[t].resize(emb_dim);
-            wq.forward(ag, input[t], q[t]);
-            wk.forward(ag, input[t], k[t]);
-            wv.forward(ag, input[t], v[t]);
+            const std::span <DataType> & mv = ag.get(mask).tensor.values();
+            for (int qi = 0; qi < seq_len; qi++)
+                for (int ki = qi + 1; ki < seq_len; ki++)
+                    mv[qi * seq_len + ki] = DataType(-1e9);
         }
 
-        NodeHandle scale = ag.value_const(1.0 / std::sqrt(head_dim));
-
-        // concat_out[t][emb_dim] : per-token concatenated head outputs
-        std::vector<std::vector<NodeHandle>> concat_out(seq_len);
-        for (int t = 0; t < seq_len; t++)
-            concat_out[t].resize(emb_dim);
-
         // -------------------------------------------------------------------
-        // STEP 2: PER-HEAD, PER-QUERY CAUSAL ATTENTION
+        // STEP 3: PER-HEAD ATTENTION + OUTPUT PROJECTION
         // -------------------------------------------------------------------
+        DataType scale = DataType(1.0) / std::sqrt(head_dim);
+
+        NodeHandle acc = {}; // set on first head, value_add'd for subsequent
         for (int h = 0; h < num_heads; h++)
         {
-            int head_start = h * head_dim;
+            NodeHandle Q_h = ag.value_slice_cols(Q, h * head_dim, head_dim);
+            NodeHandle K_h = ag.value_slice_cols(K, h * head_dim, head_dim);
+            NodeHandle V_h = ag.value_slice_cols(V, h * head_dim, head_dim);
 
-            for (int qi = 0; qi < seq_len; qi++)
-            {
-                // Causal mask: query qi attends only to keys 0..qi.
-                int num_keys = qi + 1;
+            // scores = (Q_h @ K_h^T) * scale  —  {seq_len, seq_len}
+            NodeHandle scores = ag.value_mul_const(
+                ag.value_matmul_bt(Q_h, K_h), scale);
 
-                // --- scores[ki] = dot(q[qi], k[ki]) * scale  for ki <= qi ---
-                std::vector<NodeHandle> scores(num_keys);
-                for (int ki = 0; ki < num_keys; ki++)
-                {
-                    NodeHandle dot = ag.value_mul(
-                        q[qi][head_start + 0],
-                        k[ki][head_start + 0]);
+            // Causal mask + row-wise softmax
+            NodeHandle weights = ag.value_softmax_rows(ag.value_add(scores, mask));
 
-                    for (int j = 1; j < head_dim; j++)
-                    {
-                        NodeHandle prod = ag.value_mul(
-                            q[qi][head_start + j],
-                            k[ki][head_start + j]);
-                        dot = ag.value_add(dot, prod);
-                    }
-                    scores[ki] = ag.value_mul(dot, scale);
-                }
+            // weighted values: {seq_len, seq_len} @ {seq_len, head_dim} -> {seq_len, head_dim}
+            NodeHandle head_out = ag.value_matmul(weights, V_h);
 
-                // --- softmax over the (causally masked) scores ---
-                std::vector<NodeHandle> attn_weights(num_keys);
-                softmax.forward(ag, scores, attn_weights);
+            // project to emb_dim: {seq_len, head_dim} @ {head_dim, emb_dim} -> {seq_len, emb_dim}
+            NodeHandle contrib = ag.value_matmul(head_out, wo_heads[h].start);
 
-                // --- weighted sum of values: out[qi][j] = sum_ki w[ki]*v[ki][j] ---
-                for (int j = 0; j < head_dim; j++)
-                {
-                    NodeHandle weighted_sum = ag.value_mul(
-                        attn_weights[0],
-                        v[0][head_start + j]);
-
-                    for (int ki = 1; ki < num_keys; ki++)
-                    {
-                        NodeHandle weighted = ag.value_mul(
-                            attn_weights[ki],
-                            v[ki][head_start + j]);
-                        weighted_sum = ag.value_add(weighted_sum, weighted);
-                    }
-                    concat_out[qi][head_start + j] = weighted_sum;
-                }
-            }
+            acc = (h == 0) ? contrib : ag.value_add(acc, contrib);
         }
 
-        // -------------------------------------------------------------------
-        // STEP 3: OUTPUT PROJECTION (per position)
-        // -------------------------------------------------------------------
-        for (int t = 0; t < seq_len; t++)
-        {
-            std::span<NodeHandle> co(concat_out[t].data(), emb_dim);
-            wo.forward(ag, co, output[t]);
-        }
+        return acc;
     }
 };

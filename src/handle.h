@@ -14,11 +14,4 @@ struct NodeMatrixHandle
 	int cols = 0;
 
 	int size() const { return rows * cols; }
-
-	NodeHandle get(int row, int column = 0)
-	{
-		assert(row < rows);
-		assert(column < cols);
-		return start + row * cols + column;
-	}
 };

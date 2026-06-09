@@ -5,51 +5,25 @@
 #include <cassert>
 
 // ---------------------------------------------------------------------------
-// LINEAR LAYER (MATRIX MULTIPLICATION)
+// LINEAR LAYER (matrix multiplication)
+//   out = x @ W , where x is (seq_len x cols), W is (cols x rows), out is (seq_len x rows)
 // ---------------------------------------------------------------------------
-//
-// Compute: out[o] = sum_i (w[o][i] * x[i])
-//
-// The weight matrix is stored in row-major order starting at w_offset.
-// Each output element is computed as a dot product of the weight row and input.
-
 template <typename DataType>
 struct LinearLayer
 {
-    NodeMatrixHandle parameters;
+    NodeMatrixHandle parameters; // weight matrix W (rows x cols)
 
-	void init(AutoGrad<DataType> & grad, int num_rows, int num_cols, DataType std_dev, const char * optional_name_hint = NULL)
-	{
-		parameters = grad.allocate_matrix(num_rows, num_cols, 0, std_dev, optional_name_hint ? optional_name_hint : "linear");
-	}
-
-    // @param input_indices  Array of pool indices for the input vector
-    // @param output_indices Array to receive pool indices for the output vector
-    void forward(
-        AutoGrad<DataType> & grad,
-        const std::span <NodeHandle> input_indices,
-        std::span <NodeHandle> output_indices)
+    void init(AutoGrad<DataType> & grad, int num_rows, int num_cols,
+        DataType std_dev, const char * optional_name_hint = nullptr)
     {
-        if (input_indices.empty()) return;
+        parameters = grad.allocate_parameter_matrix(num_rows, num_cols, DataType(0), std_dev,
+            optional_name_hint ? optional_name_hint : "linear");
+    }
 
-        // Assert dimension compatibility: input size must match columns, output size must match rows
-        assert((int)input_indices.size() == parameters.cols);
-        assert((int)output_indices.size() == parameters.rows);
-
-        for (int o = 0; o < output_indices.size(); o++)
-        {
-            // Compute the dot product: w[o] * x
-            // Start with the first term.
-            NodeHandle accumulator = grad.value_mul(parameters.get(o, 0), input_indices[0]);
-
-            // Add remaining terms.
-            for (int i = 1; i < input_indices.size(); i++)
-            {
-                NodeHandle product_term = grad.value_mul(parameters.get(o, i), input_indices[i]);
-                accumulator = grad.value_add(accumulator, product_term);
-            }
-
-            output_indices[o] = accumulator;
-        }
+    // `input` has shape {seq_len, cols}.  parameters is {cols, rows}.
+    // Returns the output tensor node of shape {seq_len, rows}.
+    NodeHandle forward(AutoGrad<DataType> & grad, NodeHandle input)
+    {
+        return grad.value_matmul(input, parameters.start);
     }
 };

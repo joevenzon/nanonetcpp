@@ -33,8 +33,7 @@ public:
     void resize(size_t capacity)
     {
         buffer.resize(capacity);
-        used = 0;
-        high_water = 0;
+        reset();
     }
 
     // Allocate n contiguous elements.
@@ -45,6 +44,16 @@ public:
         T * ptr = buffer.data() + used;
         used += n;
         return std::span(ptr, buffer.data() + used);
+    }
+
+    // Allocates a single element and returns its index.
+    // Does NOT zero-initialize.
+    size_t allocate()
+    {
+        assert(used + 1 <= buffer.size() && "Arena capacity exceeded; increase init() size");
+        size_t result = used;
+        used++;
+        return result;
     }
 
     // Get the current allocation cursor

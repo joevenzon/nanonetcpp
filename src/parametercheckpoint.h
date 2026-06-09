@@ -29,14 +29,14 @@ struct ParameterCheckpoint
 
 	void init(AutoGrad<DataType> & grad)
 	{
-		values.resize(grad.size(), 0);
-		grads.resize(grad.size(), 0);
-		moment1.resize(grad.size(), 0);
-		moment2.resize(grad.size(), 0);
+		values.resize(grad.get_values().size(), 0);
+		grads.resize(grad.get_gradients().size(), 0);
+		moment1.resize(values.size(), 0);
+		moment2.resize(values.size(), 0);
 
-		for (int i = 0; i < grad.size(); i++)
+		for (int i = 0; i < values.size(); i++)
 		{
-			values[i] = grad.get(NodeHandle(i)).data;
+			values[i] = grad.get_values()[i];
 		}
 
 		step_count = 0;
@@ -48,9 +48,8 @@ struct ParameterCheckpoint
 	{
 		for (int i = 0; i < values.size(); i++)
 		{
-			const AutoGrad<DataType>::Node & node = grad.get(NodeHandle(i));
-			values[i] = node.data;
-			grads[i] = node.grad;
+			values[i] = grad.get_values()[i];
+			grads[i] = grad.get_gradients()[i];
 		}
 
 		leaf_matrices.assign(grad.get_leaf_matrices().begin(), grad.get_leaf_matrices().end());
