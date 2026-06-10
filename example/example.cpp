@@ -125,16 +125,18 @@ struct Model
 
     EmbeddingLayer<float> wte;
     EmbeddingLayer<float> wpe;
-    SimpleRMSNormLayer<float> embed_norm;
-    SimpleRMSNormLayer<float> final_norm;
+    RMSNormLayer<float> embed_norm;
+    RMSNormLayer<float> final_norm;
     LinearLayer<float> lm_head;
     std::vector<TransformerBlock<float> > transformer;
 
     void init(AutoGrad<float> & grad, int vocab_size)
     {
         wte.init(grad, vocab_size, emb_dim, std_dev, "wte");
-        wpe.init(grad, block_size, emb_dim, std_dev, "wtp");
+        wpe.init(grad, block_size, emb_dim, std_dev, "wpe");
         lm_head.init(grad, emb_dim, vocab_size, std_dev, "lm_head");
+        embed_norm.init(grad, emb_dim, "embed_norm");
+        final_norm.init(grad, emb_dim, "final_norm");
 
         transformer.resize(num_layers);
         for (int li = 0; li < num_layers; li++)

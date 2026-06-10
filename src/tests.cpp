@@ -1051,7 +1051,7 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
     printf("test_rmsnorm_layer ... ");
 
     RMSNormLayer<DataType> layer;
-    layer.init(ag, 2, 0.1f, "test_rmsnorm");
+    layer.init(ag, 2, "test_rmsnorm");
 
     // Set gamma = {1, 1}, beta = {0, 0} so it behaves like SimpleRMSNorm
     {
@@ -1076,7 +1076,7 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
     // scaled = {0.848527 * 2, 1.131371 * 0.5} = {1.697054, 0.565686}
     // output = {1.697054 + 10, 0.565686 - 5} = {11.697054, -4.434314}
     ag.reset();
-    layer.init(ag, 2, 0.1f, "test_rmsnorm2");
+    layer.init(ag, 2, "test_rmsnorm2");
 
     {
         DataType *gv = ag.get(layer.gamma.start).tensor.values().data();

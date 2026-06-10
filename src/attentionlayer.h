@@ -1,6 +1,7 @@
 #pragma once
 
 #include "autograd.h"
+#include "linearlayer.h"
 
 #include <cassert>
 #include <vector>
@@ -17,11 +18,11 @@ struct AttentionLayer
         this->num_heads = num_heads;
         this->head_dim = emb_dim / num_heads;
 
-        DataType std = 1.0 / std::sqrt(emb_dim);
-        wq.init(ag, emb_dim, emb_dim, std, "wq");
-        wk.init(ag, emb_dim, emb_dim, std, "wk");
-        wv.init(ag, emb_dim, emb_dim, std, "wv");
-        wo.init(ag, emb_dim, emb_dim, std, "wo");
+        DataType std_dev = 1.0 / std::sqrt(emb_dim);
+        wq.init(ag, emb_dim, emb_dim, std_dev, "wq");
+        wk.init(ag, emb_dim, emb_dim, std_dev, "wk");
+        wv.init(ag, emb_dim, emb_dim, std_dev, "wv");
+        wo.init(ag, emb_dim, emb_dim, std_dev, "wo");
     }
 
     // Whole-sequence forward with causal masking.
@@ -29,7 +30,7 @@ struct AttentionLayer
     // returns: tensor node of shape {seq_len, emb_dim}
     NodeHandle forward(AutoGrad<DataType> & ag, NodeHandle input)
     {
-        const AutoGrad<DataType>::Node & n_input = ag.get(input);
+        const typename AutoGrad<DataType>::Node & n_input = ag.get(input);
         assert(n_input.tensor.get_shape().rank() == 2);
         int seq_len = n_input.tensor.get_shape().dims[0];
         assert(n_input.tensor.get_shape().dims[1] == emb_dim);

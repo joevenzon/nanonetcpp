@@ -7,6 +7,7 @@
 #include <span>
 #include <cassert>
 #include <string>
+#include <algorithm>
 
 #include "handle.h"
 #include "arena.h"
@@ -121,7 +122,8 @@ public:
     // Allocate a matrix of leaf nodes in the pool and return the starting offset & length.
     // @param num_rows    Number of rows in the matrix
     // @param num_cols    Number of columns in the matrix
-    // @param std_dev     Standard deviation for Gaussian initialization
+    // @param mean        Initial value mean
+    // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
     NodeMatrixHandle allocate_parameter_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
@@ -130,7 +132,10 @@ public:
         int total_elements = num_rows * num_cols;
         for (int k = 0; k < total_elements; k++)
         {
-            node.tensor.values()[k] = rand_gaussian(mean, std_dev);
+            if (std_dev == 0)
+                node.tensor.values()[k] = mean;
+            else
+                node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
         NodeMatrixHandle result(handle, num_rows, num_cols);
@@ -143,7 +148,8 @@ public:
 
     // Allocate a matrix of leaf nodes in the pool and return the starting offset & length.
     // @param num_elems   Number of elements in the vector
-    // @param std_dev     Standard deviation for Gaussian initialization
+    // @param mean        Initial value mean
+    // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
     NodeMatrixHandle allocate_parameter_vector(int num_elems, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
@@ -151,7 +157,10 @@ public:
         Node & node = get(handle);
         for (int k = 0; k < num_elems; k++)
         {
-            node.tensor.values()[k] = rand_gaussian(mean, std_dev);
+            if (std_dev == 0)
+                node.tensor.values()[k] = mean;
+            else
+                node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
         NodeMatrixHandle result(handle, num_elems, 1);
@@ -176,7 +185,7 @@ public:
 
     size_t values_used() const
     {
-        return nodes.size();
+        return values.size();
     }
 
     std::span <const DataType> get_values() const { return values.span(); }
@@ -895,6 +904,7 @@ public:
         DataType * gs = g.get(out.children[1]).tensor.gradients().data(); // src
 
         for (int m = 0; m < M; m++)
+        {
             for (int c = 0; c < N; c++)
             {
                 const bool overwritten = (c >= col_start && c < col_start + K);
@@ -904,6 +914,7 @@ public:
                 else
                     gd[m * N + c] += g_out;                // goes to dst
             }
+        }
     }
 
     NodeHandle value_scatter_cols(NodeHandle dst, NodeHandle src, int col_start)
@@ -931,10 +942,15 @@ public:
         DataType * po = node.tensor.values().data();
 
         // Copy dst
-        for (int i = 0; i < M * N; i++) po[i] = pd[i];
+        for (int i = 0; i < M * N; i++)
+        {
+            po[i] = pd[i];
+        }
         // Overwrite columns [col_start, col_start+K) with src
         for (int m = 0; m < M; m++)
+        {
             for (int c = 0; c < K; c++) po[m * N + col_start + c] = ps[m * K + c];
+        }
 
         node.backward_fn = &AutoGrad<DataType>::bwd_scatter_cols;
 
@@ -1213,7 +1229,7 @@ public:
     }
 
     // =============================================================================
-    // ROW-WISE REDUCTION: sum each row -> {M, 1}
+    // ROW-WISE REDUCTION: sum each row -> return rank-1 {M}
     // Forward:  out[i] = sum(a[i*N .. (i+1)*N - 1])
     // Backward: ga[i*N + j] += go[i]   for all j  (broadcast row grad across columns)
     // =============================================================================
@@ -1458,8 +1474,7 @@ private:
 
     int persistent_node_count{ 0 };
     std::mt19937_64 rng{ 42 };
-    std::uniform_real_distribution<float> uniform{ 0, 1 };
-    std::normal_distribution<float> gaussian{ 0, 1 };
+    std::uniform_real_distribution<DataType> uniform{ 0, 1 };
     std::vector <LeafMatrixRecord> leaf_matrices;
 };
 

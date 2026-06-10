@@ -70,10 +70,10 @@ struct RMSNormLayer
     NodeMatrixHandle beta;
     DataType epsilon = 1e-5f;
 
-    void init(AutoGrad<DataType> & grad, int dim, DataType std_dev, const char * optional_name_hint = NULL)
+    void init(AutoGrad<DataType> & grad, int dim, const char * optional_name_hint = NULL)
     {
-        gamma = grad.allocate_parameter_vector(dim, 1, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_gamma");
-        beta = grad.allocate_parameter_vector(dim, 0, std_dev, optional_name_hint ? optional_name_hint : "rmsnorm_beta");
+        gamma = grad.allocate_parameter_vector(dim, 1, 0, optional_name_hint ? optional_name_hint : "rmsnorm_gamma");
+        beta = grad.allocate_parameter_vector(dim, 0, 0, optional_name_hint ? optional_name_hint : "rmsnorm_beta");
     }
 
     // `input` is a tensor node of shape {dim} (rank-1) or {M, dim} (rank-2).

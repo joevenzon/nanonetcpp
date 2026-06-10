@@ -18,8 +18,8 @@ struct TransformerBlock
     {
         attention.init(ag, emb_dim, num_heads);
         mlp.init(ag, emb_dim, ffn_dim, "transformer_mlp");
-        norm1.init(ag, emb_dim, std_dev, "transformer_norm1");
-        norm2.init(ag, emb_dim, std_dev, "transformer_norm2");
+        norm1.init(ag, emb_dim, "transformer_norm1");
+        norm2.init(ag, emb_dim, "transformer_norm2");
     }
 
     // input  : tensor node of shape {seq_len, emb_dim}

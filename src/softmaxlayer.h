@@ -24,7 +24,7 @@ struct SoftmaxLayer
         // Step 1: Find the maximum logit value for numerical stability.
         // Read the raw value directly — don't create a graph node, because max
         // is only used as a numerical-stability constant here, not as a differentiable op.
-        const AutoGrad<DataType>::Node & in_node = grad.get(input);
+        const typename AutoGrad<DataType>::Node & in_node = grad.get(input);
         const DataType * pvalues = in_node.tensor.values().data();
         const int n = in_node.tensor.numel();
         DataType max_value = pvalues[0];
