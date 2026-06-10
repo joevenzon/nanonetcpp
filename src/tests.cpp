@@ -135,6 +135,20 @@ static void test_pow(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+static void test_pow_noninteger(AutoGrad<DataType> &ag)
+{
+    printf("test_pow_noninteger ... ");
+    // 3^2.5 = 15.588457, d(x^2.5)/dx = 2.5 * 3^1.5 = 12.990380
+    NodeHandle a = ag.value_leaf(3.0f);
+    NodeHandle r = ag.value_pow(a, 2.5f);
+
+    ASSERT_FLOAT_EQ(15.588457f, ag.get(r).tensor.values()[0], "3^2.5");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(12.990380f, ag.get(a).tensor.gradients()[0], "d(x^2.5)/dx at 3");
+    printf("\n");
+}
+
 // value_log -----------------------------------------------------------------
 static void test_log(AutoGrad<DataType> &ag)
 {
@@ -297,6 +311,20 @@ static void test_erf(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+static void test_erf_nonzero(AutoGrad<DataType> &ag)
+{
+    printf("test_erf_nonzero ... ");
+    // erf(1) = 0.842701, d(erf)/dx at 1 = 2/sqrt(pi) * exp(-1) = 0.415108
+    NodeHandle a = ag.value_leaf(1.0f);
+    NodeHandle r = ag.value_erf(a);
+
+    ASSERT_FLOAT_EQ(0.842701f, ag.get(r).tensor.values()[0], "erf(1)");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(0.415108f, ag.get(a).tensor.gradients()[0], "d(erf)/dx at 1");
+    printf("\n");
+}
+
 // value_gelu ----------------------------------------------------------------
 static void test_gelu(AutoGrad<DataType> &ag)
 {
@@ -309,6 +337,34 @@ static void test_gelu(AutoGrad<DataType> &ag)
     ag.backward(r);
     // d(gelu(x))/dx at x=0 is 0.5
     ASSERT_FLOAT_EQ(0.5f, ag.get(a).tensor.gradients()[0], "d(gelu)/dx at 0 == 0.5");
+    printf("\n");
+}
+
+static void test_gelu_nonzero(AutoGrad<DataType> &ag)
+{
+    printf("test_gelu_nonzero ... ");
+    // gelu(1) = 0.841345, d(gelu)/dx at 1 = 1.083315
+    NodeHandle a = ag.value_leaf(1.0f);
+    NodeHandle r = ag.value_gelu(a);
+
+    ASSERT_FLOAT_EQ(0.841345f, ag.get(r).tensor.values()[0], "gelu(1)");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(1.083315f, ag.get(a).tensor.gradients()[0], "d(gelu)/dx at 1");
+    printf("\n");
+}
+
+static void test_gelu_negative(AutoGrad<DataType> &ag)
+{
+    printf("test_gelu_negative ... ");
+    // gelu(-1) = -0.158655, d(gelu)/dx at -1 = -0.083315
+    NodeHandle a = ag.value_leaf(-1.0f);
+    NodeHandle r = ag.value_gelu(a);
+
+    ASSERT_FLOAT_EQ(-0.158655f, ag.get(r).tensor.values()[0], "gelu(-1)");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(-0.083315f, ag.get(a).tensor.gradients()[0], "d(gelu)/dx at -1");
     printf("\n");
 }
 
@@ -368,6 +424,10 @@ static void test_slice_cols(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[1], "col 1 sliced");
     ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[2], "col 2 sliced");
     ASSERT_FLOAT_EQ(0.0f, ag.get(m).tensor.gradients()[3], "col 3 not sliced");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(m).tensor.gradients()[4], "row1 col 0 not sliced");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[5], "row1 col 1 sliced");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[6], "row1 col 2 sliced");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(m).tensor.gradients()[7], "row1 col 3 not sliced");
     printf("\n");
 }
 
@@ -410,6 +470,13 @@ static void test_scatter_row(AutoGrad<DataType> &ag)
     ag.backward(out);
     ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[0], "src grad[0] == 1");
     ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[1], "src grad[1] == 1");
+    // dst gradients: row 0 passed through (1), row 1 overwritten (0), row 2 passed through (1)
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[0], "dst grad[0,0] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[1], "dst grad[0,1] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[2], "dst grad[1,0] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[3], "dst grad[1,1] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[4], "dst grad[2,0] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[5], "dst grad[2,1] == 1 (passed through)");
     printf("\n");
 }
 
@@ -441,6 +508,15 @@ static void test_scatter_cols(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[1], "src grad[1] == 1");
     ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[2], "src grad[2] == 1");
     ASSERT_FLOAT_EQ(1.0f, ag.get(src).tensor.gradients()[3], "src grad[3] == 1");
+    // dst gradients: cols 0,3 passed through (1), cols 1-2 overwritten (0)
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[0], "dst grad[0,0] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[1], "dst grad[0,1] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[2], "dst grad[0,2] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[3], "dst grad[0,3] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[4], "dst grad[1,0] == 1 (passed through)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[5], "dst grad[1,1] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(0.0f, ag.get(dst).tensor.gradients()[6], "dst grad[1,2] == 0 (overwritten)");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(dst).tensor.gradients()[7], "dst grad[1,3] == 1 (passed through)");
     printf("\n");
 }
 
@@ -464,10 +540,16 @@ static void test_matmul(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(50.0f, ag.get(c).tensor.values()[3], "C[1,1] == 3*6+4*8");
 
     ag.backward(c);
+    // dL/dA = dL/dC @ B^T = {{1,1},{1,1}} @ {{5,7},{6,8}} = {{11,15},{11,15}}
     ASSERT_FLOAT_EQ(11.0f, ag.get(a).tensor.gradients()[0], "dL/dA[0,0]");
     ASSERT_FLOAT_EQ(15.0f, ag.get(a).tensor.gradients()[1], "dL/dA[0,1]");
+    ASSERT_FLOAT_EQ(11.0f, ag.get(a).tensor.gradients()[2], "dL/dA[1,0]");
+    ASSERT_FLOAT_EQ(15.0f, ag.get(a).tensor.gradients()[3], "dL/dA[1,1]");
+    // dL/dB = A^T @ dL/dC = {{1,3},{2,4}} @ {{1,1},{1,1}} = {{4,4},{6,6}}
     ASSERT_FLOAT_EQ(4.0f, ag.get(b).tensor.gradients()[0], "dL/dB[0,0]");
+    ASSERT_FLOAT_EQ(4.0f, ag.get(b).tensor.gradients()[1], "dL/dB[0,1]");
     ASSERT_FLOAT_EQ(6.0f, ag.get(b).tensor.gradients()[2], "dL/dB[1,0]");
+    ASSERT_FLOAT_EQ(6.0f, ag.get(b).tensor.gradients()[3], "dL/dB[1,1]");
     printf("\n");
 }
 
@@ -492,10 +574,16 @@ static void test_matmul_bt(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(53.0f, ag.get(c).tensor.values()[3], "C[1,1] == 3*6+4*8");
 
     ag.backward(c);
-    ASSERT_FLOAT_EQ(12, ag.get(a).tensor.gradients()[0], "dL/dA[0,0]");
+    // C = A @ B^T, so dL/dA = dL/dC @ B   = {{1,1},{1,1}} @ {{5,6},{7,8}} = {{12,14},{12,14}}
+    ASSERT_FLOAT_EQ(12.0f, ag.get(a).tensor.gradients()[0], "dL/dA[0,0]");
     ASSERT_FLOAT_EQ(14.0f, ag.get(a).tensor.gradients()[1], "dL/dA[0,1]");
+    ASSERT_FLOAT_EQ(12.0f, ag.get(a).tensor.gradients()[2], "dL/dA[1,0]");
+    ASSERT_FLOAT_EQ(14.0f, ag.get(a).tensor.gradients()[3], "dL/dA[1,1]");
+    // dL/dB = dL/dC @ A^T, then transpose = (A @ dL/dC)^T = {{4,6},{4,6}}
     ASSERT_FLOAT_EQ(4.0f, ag.get(b).tensor.gradients()[0], "dL/dB[0,0]");
     ASSERT_FLOAT_EQ(6.0f, ag.get(b).tensor.gradients()[1], "dL/dB[0,1]");
+    ASSERT_FLOAT_EQ(4.0f, ag.get(b).tensor.gradients()[2], "dL/dB[1,0]");
+    ASSERT_FLOAT_EQ(6.0f, ag.get(b).tensor.gradients()[3], "dL/dB[1,1]");
     printf("\n");
 }
 
@@ -575,7 +663,12 @@ static void test_sum_rows(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(15.0f, ag.get(s).tensor.values()[1], "row 1 sum == 15");
 
     ag.backward(s);
+    // All gradients should be 1 (each element contributes equally to its row sum)
     ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[0], "grad[0,0] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[1], "grad[0,1] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[2], "grad[0,2] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[3], "grad[1,0] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[4], "grad[1,1] == 1");
     ASSERT_FLOAT_EQ(1.0f, ag.get(m).tensor.gradients()[5], "grad[1,2] == 1");
     printf("\n");
 }
@@ -654,7 +747,12 @@ static void test_add_rows(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(24.0f, ag.get(out).tensor.values()[3], "out[1,1] == 4+20");
 
     ag.backward(out);
+    // grad on A: all 1s (each element added directly)
     ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[0], "dA[0,0] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[1], "dA[0,1] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[2], "dA[1,0] == 1");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[3], "dA[1,1] == 1");
+    // grad on b: sum over columns (2 elements per row)
     ASSERT_FLOAT_EQ(2.0f, ag.get(b).tensor.gradients()[0], "db[0] == 1+1");
     ASSERT_FLOAT_EQ(2.0f, ag.get(b).tensor.gradients()[1], "db[1] == 1+1");
     printf("\n");
@@ -937,9 +1035,12 @@ static void test_simple_rmsnorm_layer(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(0.848527f, ag.get(output).tensor.values()[0], "norm[0]");
     ASSERT_FLOAT_EQ(1.131371f, ag.get(output).tensor.values()[1], "norm[1]");
 
-    // Verify backward passes without error
     ag.backward(output);
     ASSERT_INT_EQ(2, ag.get(input).tensor.numel(), "input grad shape preserved");
+    // torch: x=[3,4], y = x/sqrt(mean(x^2)+eps), dy/dx with uniform upstream grad:
+    // grad[0] = 0.0453, grad[1] = -0.0339
+    ASSERT_FLOAT_EQ(0.0453f, ag.get(input).tensor.gradients()[0], "dx[0]");
+    ASSERT_FLOAT_EQ(-0.0339f, ag.get(input).tensor.gradients()[1], "dx[1]");
 
     printf("\n");
 }
@@ -994,8 +1095,15 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
     ASSERT_FLOAT_EQ(11.697054f, ag.get(output).tensor.values()[0], "affine norm[0]");
     ASSERT_FLOAT_EQ(-4.434314f, ag.get(output).tensor.values()[1], "affine norm[1]");
 
-    // Verify backward passes without error
     ag.backward(output);
+    // torch: x=[3,4], gamma=[2,0.5], beta=[10,-5]
+    // dx = [0.2942, -0.2206], dgamma = [0.8485, 1.1314], dbeta = [1, 1]
+    ASSERT_FLOAT_EQ(0.2942f, ag.get(input).tensor.gradients()[0], "dx[0]");
+    ASSERT_FLOAT_EQ(-0.2206f, ag.get(input).tensor.gradients()[1], "dx[1]");
+    ASSERT_FLOAT_EQ(0.8485f, ag.get(layer.gamma.start).tensor.gradients()[0], "dgamma[0]");
+    ASSERT_FLOAT_EQ(1.1314f, ag.get(layer.gamma.start).tensor.gradients()[1], "dgamma[1]");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta.start).tensor.gradients()[0], "dbeta[0]");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta.start).tensor.gradients()[1], "dbeta[1]");
 
     printf("\n");
 }
@@ -1089,6 +1197,9 @@ int main()
     test_pow(ag);
     ag.reset();
 
+    test_pow_noninteger(ag);
+    ag.reset();
+
     test_log(ag);
     ag.reset();
 
@@ -1125,7 +1236,16 @@ int main()
     test_erf(ag);
     ag.reset();
 
+    test_erf_nonzero(ag);
+    ag.reset();
+
     test_gelu(ag);
+    ag.reset();
+
+    test_gelu_nonzero(ag);
+    ag.reset();
+
+    test_gelu_negative(ag);
     ag.reset();
 
     test_select_row(ag);
