@@ -1037,11 +1037,13 @@ public:
         const DataType * B = nb.tensor.values().data();
         DataType * C = node.tensor.values().data();
         for (int m = 0; m < M; m++)
+        {
             for (int n = 0; n < N; n++) {
                 DataType acc = DataType(0);
                 for (int k = 0; k < K; k++) acc += A[m * K + k] * B[k * N + n];
                 C[m * N + n] = acc;
             }
+        }
 
         node.backward_fn = &AutoGrad<DataType>::bwd_matmul;
 

@@ -8,6 +8,7 @@
 #include "../src/adamoptimizer.h"
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 // =============================================================================
@@ -284,6 +285,9 @@ int main(void)
     // Buffers for tokens.
     std::array <NodeHandle, vocab_size> logit_nodes;
 
+    // Start the training timer.
+    std::chrono::steady_clock::time_point train_start = std::chrono::steady_clock::now();
+
     for (int step = 0; step < num_training_steps; step++)
     {
         // Restore parameter values into the pool (pool is rebuilt each step).
@@ -375,6 +379,14 @@ int main(void)
     }
 
     std::printf("\n");
+
+    // Print the total training time.
+    std::chrono::steady_clock::time_point train_end = std::chrono::steady_clock::now();
+    std::chrono::duration<double> train_duration = train_end - train_start;
+    double total_seconds = train_duration.count();
+    int minutes = (int)(total_seconds / 60.0);
+    double seconds = total_seconds - (double)minutes * 60.0;
+    std::printf("training time: %02d:%05.2f\n", minutes, seconds);
 
     // -----------------------------------------------------------------------
     // PHASE 4: INFERENCE (TEXT GENERATION)
