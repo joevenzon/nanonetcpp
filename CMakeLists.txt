@@ -41,7 +41,7 @@ set_target_properties(example PROPERTIES
 # Per-config compile options
 target_compile_options(example PRIVATE
   $<$<CONFIG:Debug>:/Od /Zi>
-  $<$<CONFIG:Release>:/O2 /Ob2 /Zi>
+  $<$<CONFIG:Release>:/O2 /Ob2 /arch:AVX2 /Zi>
 )
 
 # Per-config linker options

@@ -35,9 +35,12 @@ struct AdamOptimizer
         for (DataType g : grads)
             norm_sq += g * g;
 
-        DataType norm = std::sqrt(norm_sq);
-        if (norm > clip)
+        DataType clip_sq = clip * clip;
+
+        if (norm_sq > clip_sq)
         {
+            DataType norm = std::sqrt(norm_sq);
+
             DataType scale = clip / norm;
             for (DataType & g : grads)
                 g *= scale;
@@ -48,27 +51,25 @@ struct AdamOptimizer
     {
         params.step_count++;
 
-        if (grad_clip > 0.0f)
+        if (grad_clip > 0)
             clip_gradients(params.grads, grad_clip);
 
         // Bias correction terms
-        DataType bc1 = 1.0f - std::pow(beta1, (DataType)params.step_count);
-        DataType bc2 = 1.0f - std::pow(beta2, (DataType)params.step_count);
+        DataType bc1 = 1 - std::pow(beta1, (DataType)params.step_count);
+        DataType bc2 = 1 - std::pow(beta2, (DataType)params.step_count);
+
+        DataType step_size = lr / bc1;          // replaces lr * m_hat/bc1
+        DataType inv_sqrt_bc2 = DataType{ 1 } / std::sqrt(bc2);  // pulled out of loop
 
         for (int i = 0; i < params.size(); i++)
         {
             DataType g = params.grads[i];
+            params.moment1[i] = beta1 * params.moment1[i] + (DataType{ 1 } - beta1) * g;
+            params.moment2[i] = beta2 * params.moment2[i] + (DataType{ 1 } - beta2) * g * g;
 
-            // Update moment estimates
-            params.moment1[i] = beta1 * params.moment1[i] + (1.0f - beta1) * g;
-            params.moment2[i] = beta2 * params.moment2[i] + (1.0f - beta2) * g * g;
-
-            // bias-corrected estimates
-            DataType m_hat = params.moment1[i] / bc1;
-            DataType v_hat = params.moment2[i] / bc2;
-
-            // update parameter value directly
-            params.values[i] -= lr * m_hat / (std::sqrt(v_hat) + eps);
+            // v_hat = moment2[i] / bc2, sqrt(v_hat) = sqrt(moment2[i]) * inv_sqrt_bc2
+            DataType denom = std::sqrt(params.moment2[i]) * inv_sqrt_bc2 + eps;
+            params.values[i] -= step_size * params.moment1[i] / denom;
         }
     }
 };

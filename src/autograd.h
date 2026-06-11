@@ -989,7 +989,7 @@ public:
     // =============================================================================
     // MATMUL: (M x K) @ (K x N) -> (M x N)
     // =============================================================================
-    static void bwd_matmul(AutoGrad<DataType> & g, const Node & out)
+    static void bwd_matmul_general(AutoGrad<DataType> & g, const Node & out)
     {
         const Node & na = g.get(out.children[0]);
         const Node & nb = g.get(out.children[1]);
@@ -1004,20 +1004,26 @@ public:
         DataType * GB = g.get(out.children[1]).tensor.gradients().data(); // dL/dB = A^T @ GC  (K x N)
 
         for (int m = 0; m < M; m++)
-            for (int k = 0; k < K; k++) {
+        {
+            for (int k = 0; k < K; k++)
+            {
                 DataType acc = DataType(0);
                 for (int n = 0; n < N; n++) acc += GC[m * N + n] * B[k * N + n];
                 GA[m * K + k] += acc;
             }
+        }
         for (int k = 0; k < K; k++)
-            for (int n = 0; n < N; n++) {
+        {
+            for (int n = 0; n < N; n++)
+            {
                 DataType acc = DataType(0);
                 for (int m = 0; m < M; m++) acc += A[m * K + k] * GC[m * N + n];
                 GB[k * N + n] += acc;
             }
+        }
     }
 
-    NodeHandle value_matmul(NodeHandle a, NodeHandle b)
+    NodeHandle value_matmul_general(NodeHandle a, NodeHandle b)
     {
         const Node & na = get(a);
         const Node & nb = get(b);
@@ -1045,9 +1051,142 @@ public:
             }
         }
 
-        node.backward_fn = &AutoGrad<DataType>::bwd_matmul;
+        node.backward_fn = &AutoGrad<DataType>::bwd_matmul_general;
 
         return h;
+    }
+
+    // Horizontal sum of 8 floats
+    static inline float hsum256_ps(__m256 v)
+    {
+        __m128 lo = _mm256_castps256_ps128(v);
+        __m128 hi = _mm256_extractf128_ps(v, 1);
+        lo = _mm_add_ps(lo, hi);                              // 4 partial sums
+        lo = _mm_add_ps(lo, _mm_movehl_ps(lo, lo));           // 2 partial sums
+        lo = _mm_add_ss(lo, _mm_shuffle_ps(lo, lo, 0x55));    // final sum in lane 0
+        return _mm_cvtss_f32(lo);
+    }
+
+    static void bwd_matmul_float(AutoGrad<DataType> & g, const Node & out)
+    {
+        static_assert(std::is_same<DataType, float>::value, "AVX2 path assumes float");
+
+        const Node & na = g.get(out.children[0]);
+        const Node & nb = g.get(out.children[1]);
+        const int M = na.tensor.get_shape().dims[0];
+        const int K = na.tensor.get_shape().dims[1];
+        const int N = nb.tensor.get_shape().dims[1];
+
+        const float * A = na.tensor.values().data();
+        const float * B = nb.tensor.values().data();
+        const float * GC = out.tensor.gradients().data();
+        float * GA = g.get(out.children[0]).tensor.gradients().data(); // dL/dA = GC @ B^T  (M x K)
+        float * GB = g.get(out.children[1]).tensor.gradients().data(); // dL/dB = A^T @ GC  (K x N)
+
+        // ---- dL/dA: row-row dot products over n ----
+        for (int m = 0; m < M; m++)
+        {
+            const float * GCrow = GC + m * N;
+            for (int k = 0; k < K; k++)
+            {
+                const float * Brow = B + k * N;
+                __m256 acc0 = _mm256_setzero_ps();
+                __m256 acc1 = _mm256_setzero_ps();
+                int n = 0;
+                for (; n + 16 <= N; n += 16) {
+                    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(GCrow + n), _mm256_loadu_ps(Brow + n), acc0);
+                    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(GCrow + n + 8), _mm256_loadu_ps(Brow + n + 8), acc1);
+                }
+                for (; n + 8 <= N; n += 8)
+                    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(GCrow + n), _mm256_loadu_ps(Brow + n), acc0);
+
+                float acc = hsum256_ps(_mm256_add_ps(acc0, acc1));
+                for (; n < N; n++) acc += GCrow[n] * Brow[n];
+
+                GA[m * K + k] += acc;
+            }
+        }
+
+        // ---- dL/dB: loops reordered (m outer) so n is the vectorized, contiguous axis ----
+        for (int m = 0; m < M; m++)
+        {
+            const float * GCrow = GC + m * N;
+            for (int k = 0; k < K; k++)
+            {
+                const float a_scalar = A[m * K + k];
+                const __m256 a = _mm256_set1_ps(a_scalar);
+                float * GBrow = GB + k * N;
+                int n = 0;
+                for (; n + 8 <= N; n += 8)
+                    _mm256_storeu_ps(GBrow + n,
+                        _mm256_fmadd_ps(a, _mm256_loadu_ps(GCrow + n), _mm256_loadu_ps(GBrow + n)));
+                for (; n < N; n++) GBrow[n] += a_scalar * GCrow[n];
+            }
+        }
+    }
+
+    NodeHandle value_matmul_float(NodeHandle a, NodeHandle b)
+    {
+        static_assert(std::is_same<DataType, float>::value, "AVX2 path assumes float");
+
+        const Node & na = get(a);
+        const Node & nb = get(b);
+        assert(na.tensor.get_shape().rank() == 2 && nb.tensor.get_shape().rank() == 2);
+        const int M = na.tensor.get_shape().dims[0];
+        const int K = na.tensor.get_shape().dims[1];
+        assert(nb.tensor.get_shape().dims[0] == K);
+        const int N = nb.tensor.get_shape().dims[1];
+
+        NodeHandle h = allocate_node(TensorShape{ M, N });
+        Node & node = get(h);
+
+        node.children.push_back(a);
+        node.children.push_back(b);
+
+        const float * A = na.tensor.values().data();
+        const float * B = nb.tensor.values().data();
+        float * C = node.tensor.values().data();
+
+        // C = A @ B, broadcast-FMA form: all loads/stores are row-contiguous
+        for (int m = 0; m < M; m++)
+        {
+            float * Crow = C + m * N;
+
+            // Zero the output row
+            int n = 0;
+            const __m256 zero = _mm256_setzero_ps();
+            for (; n + 8 <= N; n += 8) _mm256_storeu_ps(Crow + n, zero);
+            for (; n < N; n++) Crow[n] = 0.0f;
+
+            for (int k = 0; k < K; k++)
+            {
+                const float a_scalar = A[m * K + k];
+                const __m256 av = _mm256_set1_ps(a_scalar);
+                const float * Brow = B + k * N;
+                n = 0;
+                for (; n + 8 <= N; n += 8)
+                    _mm256_storeu_ps(Crow + n,
+                        _mm256_fmadd_ps(av, _mm256_loadu_ps(Brow + n), _mm256_loadu_ps(Crow + n)));
+                for (; n < N; n++) Crow[n] += a_scalar * Brow[n];
+            }
+        }
+
+        node.backward_fn = &AutoGrad<DataType>::bwd_matmul_float;
+
+        return h;
+    }
+
+    NodeHandle value_matmul(NodeHandle a, NodeHandle b)
+    {
+        if constexpr (std::is_same_v<DataType, float>)
+        {
+            return value_matmul_float(a, b);
+        }
+        else
+        {
+            // Call the generic implementation for non-float types
+            return value_matmul_general(a, b);
+        }
     }
 
     // =============================================================================
