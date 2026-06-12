@@ -59,7 +59,7 @@ struct ParameterCheckpoint
 				grads[i] += grad.get_gradients()[i];
 			}
 		}
-		ese
+		else
 		{
 			for (int i = 0; i < values.size(); i++)
 			{

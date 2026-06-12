@@ -3,6 +3,8 @@ out/
 .vs/
 *.exe
 *.chk
+*.pt
 *.pdb
 *.ilk
+python_weights_heatmap.html
 CMakeSettings.json
