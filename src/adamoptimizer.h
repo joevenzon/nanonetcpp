@@ -72,4 +72,10 @@ struct AdamOptimizer
             params.values[i] -= step_size * params.moment1[i] / denom;
         }
     }
+
+    void zero_grad(ParameterCheckpoint<DataType> & params)
+    {
+        for (DataType & g : params.grads)
+            g = 0;
+    }
 };

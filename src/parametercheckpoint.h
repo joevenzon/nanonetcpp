@@ -99,7 +99,7 @@ struct ParameterCheckpoint
 			dataTypeId = 1;
 		else
 		{
-			err << "Cannot save an empty checkpoint\n";
+			err << "Unsupported DataType for checkpoint save\n";
 			return false;
 		}
 		out.write(reinterpret_cast<const char *>(&dataTypeId), sizeof(dataTypeId));
@@ -178,7 +178,7 @@ struct ParameterCheckpoint
 		in.read(reinterpret_cast<char *>(&version), sizeof(version));
 		if (version != CHECKPOINT_VERSION)
 		{
-			err << "Unsupported checkpoint version: " + version << "\n";
+			err << "Unsupported checkpoint version: " << version << "\n";
 			return false;
 		}
 
@@ -189,7 +189,7 @@ struct ParameterCheckpoint
 			typeMatch = (dataTypeId == 1);
 		if (!typeMatch)
 		{
-			err << "DataType mismatch: file stores id=" + dataTypeId << " which is unsupported\n";
+			err << "DataType mismatch: file stores id=" << dataTypeId << " which is unsupported\n";
 			return false;
 		}
 

@@ -1304,6 +1304,78 @@ public:
     }
 
     // =============================================================================
+    // LOG-SOFTMAX ROWS: numerically stable log-softmax across columns, per row
+    // Input:  X  {M, N}
+    // Output: Y  {M, N}   Y[i,j] = X[i,j] - max_row_i - log( Σ_k exp(X[i,k] - max_row_i) )
+    //
+    // Equivalently: Y = log(softmax(X, dim=1)), but computed without materialising softmax
+    // to avoid catastrophic cancellation.
+    //
+    // Backward:
+    //   Let s[i,j] = softmax(X)[i,j] = exp(Y[i,j])  (recoverable from the output values)
+    //   ∂L/∂X[i,k] = go[i,k]  −  s[i,k] · Σ_j go[i,j]
+    // =============================================================================
+    static void bwd_log_softmax_rows(AutoGrad<DataType> & g, const Node & out)
+    {
+        const int M = out.tensor.get_shape().dims[0];
+        const int N = out.tensor.get_shape().dims[1];
+
+        // out.tensor.values() holds log-probabilities Y[i,j]; exp(Y[i,j]) = softmax[i,j].
+        const DataType * y = out.tensor.values().data();
+        const DataType * go = out.tensor.gradients().data();
+        DataType * gx = g.get(out.children[0]).tensor.gradients().data();
+
+        for (int i = 0; i < M; i++)
+        {
+            const DataType * yi = y + i * N;
+            const DataType * goi = go + i * N;
+            DataType * gxi = gx + i * N;
+
+            // Σ_j go[i,j]
+            DataType sum_grad = DataType(0);
+            for (int j = 0; j < N; j++) sum_grad += goi[j];
+
+            // gx[i,k] += go[i,k] - exp(y[i,k]) * sum_grad
+            for (int k = 0; k < N; k++)
+                gxi[k] += goi[k] - std::exp(yi[k]) * sum_grad;
+        }
+    }
+
+    NodeHandle value_log_softmax_rows(NodeHandle a)
+    {
+        const TensorShape & shape = get(a).tensor.get_shape();
+        assert(shape.rank() == 2);
+        const int M = shape.dims[0];
+        const int N = shape.dims[1];
+
+        NodeHandle h = allocate_node(shape);
+        Node & node = get(h);
+        node.children.push_back(a);
+
+        const DataType * px = get(a).tensor.values().data();
+        DataType * py = node.tensor.values().data();
+
+        for (int i = 0; i < M; i++)
+        {
+            const DataType * row = px + i * N;
+            DataType * out = py + i * N;
+
+            // Numerically stable: subtract per-row max before exp.
+            DataType mx = *std::max_element(row, row + N);
+
+            DataType sum_exp = DataType(0);
+            for (int j = 0; j < N; j++) sum_exp += std::exp(row[j] - mx);
+
+            const DataType log_sum_exp = mx + std::log(sum_exp);   // log Σ exp(x_j)
+
+            for (int j = 0; j < N; j++) out[j] = row[j] - log_sum_exp;
+        }
+
+        node.backward_fn = &AutoGrad<DataType>::bwd_log_softmax_rows;
+        return h;
+    }
+
+    // =============================================================================
     // REDUCTION: max element -> scalar (rank-1, single element)
     // =============================================================================
     static void bwd_max(AutoGrad<DataType> & g, const Node & out)

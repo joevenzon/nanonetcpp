@@ -318,7 +318,7 @@ int main(void)
             std::span<const int>(token_sequence.data(), seq_len));
 
         // Row-wise softmax -> probabilities {seq_len, vocab_size}
-        NodeHandle probs = grad.value_softmax_rows(logits);
+        NodeHandle log_probs = grad.value_log_softmax_rows(logits);
 
         // Accumulate loss over all positions
         NodeHandle loss_accumulator = -1;
@@ -327,10 +327,8 @@ int main(void)
         {
             int target_token = token_sequence[pos + 1];
             int flat_idx = pos * vocab_size + target_token;
-            NodeHandle prob = grad.value_select_element(probs, flat_idx);
-
-            NodeHandle neg_log_prob = grad.value_mul_const(
-                grad.value_log(prob), -1);
+            NodeHandle log_prob = grad.value_select_element(log_probs, flat_idx);
+            NodeHandle neg_log_prob = grad.value_mul_const(log_prob, -1);
 
             loss_accumulator = (loss_accumulator < 0)
                 ? neg_log_prob
@@ -341,6 +339,7 @@ int main(void)
         int loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
 
         // Backward pass: compute gradients for all parameters.
+        optimizer.zero_grad(checkpoint);
         grad.backward(loss_node);
 
         // capture current parameter values in the checkpoint
