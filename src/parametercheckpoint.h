@@ -44,15 +44,37 @@ struct ParameterCheckpoint
 		update(grad);
 	}
 
-	void update(AutoGrad<DataType> & grad)
+	// pass accumulate=true during a gradient accumulation cycle
+	void update(AutoGrad<DataType> & grad, bool accumulate = false)
 	{
 		for (int i = 0; i < values.size(); i++)
 		{
 			values[i] = grad.get_values()[i];
-			grads[i] = grad.get_gradients()[i];
+		}
+
+		if (accumulate)
+		{
+			for (int i = 0; i < values.size(); i++)
+			{
+				grads[i] += grad.get_gradients()[i];
+			}
+		}
+		ese
+		{
+			for (int i = 0; i < values.size(); i++)
+			{
+				grads[i] = grad.get_gradients()[i];
+			}
 		}
 
 		leaf_matrices.assign(grad.get_leaf_matrices().begin(), grad.get_leaf_matrices().end());
+	}
+
+	// Average the accumulated gradients over the number of micro-steps, for gradient accumulation.
+	void scale_grads(DataType scale)
+	{
+		for (DataType & g : grads)
+			g *= scale;
 	}
 
 	size_t size() const { return values.size(); }
