@@ -113,6 +113,10 @@ static void split_train_val()
     }
 }
 
+// =============================================================================
+// MODEL
+// =============================================================================
+
 struct Model
 {
     // model hyperparameters
@@ -135,7 +139,7 @@ struct Model
     {
         wte.init(grad, vocab_size, emb_dim, std_dev, "wte");
         wpe.init(grad, block_size, emb_dim, std_dev, "wpe");
-        lm_head.init(grad, emb_dim, vocab_size, std_dev, "lm_head");
+        lm_head.init(grad, emb_dim, vocab_size, false, std_dev, "lm_head");
         embed_norm.init(grad, emb_dim, "embed_norm");
         final_norm.init(grad, emb_dim, "final_norm");
 
@@ -176,6 +180,10 @@ struct Model
         return logits;
     }
 };
+
+// =============================================================================
+// VALIDATION
+// =============================================================================
 
 // Compute validation loss by running forward pass on all validation documents.
 // Returns the average negative log likelihood over all validation positions.
@@ -226,6 +234,10 @@ float compute_validation_loss(
     return total_positions == 0 ? 0.0f : total_loss / (float)total_positions;
 }
 
+// =============================================================================
+// MAIN
+// =============================================================================
+
 int main(void)
 {
     // -----------------------------------------------------------------------
@@ -252,8 +264,6 @@ int main(void)
     // -----------------------------------------------------------------------
     // PHASE 2: INITIALIZE MODEL PARAMETERS
     // -----------------------------------------------------------------------
-    // Each parameter is a leaf Value node in the pool.
-    // Matrices are initialized with small Gaussian random values.
 
     AutoGrad<float> grad;
     // run at least one training iteration in debug mode to see if you're going to run out of memory

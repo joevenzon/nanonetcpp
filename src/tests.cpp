@@ -6,10 +6,12 @@
 #include "attentionlayer.h"
 #include "mlplayer.h"
 #include "transformerblock.h"
+#include "parametercheckpoint.h"
 
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 
 typedef float DataType;
 
@@ -365,6 +367,49 @@ static void test_gelu_negative(AutoGrad<DataType> &ag)
 
     ag.backward(r);
     ASSERT_FLOAT_EQ(-0.083315f, ag.get(a).tensor.gradients()[0], "d(gelu)/dx at -1");
+    printf("\n");
+}
+
+// value_tanh ----------------------------------------------------------------
+static void test_tanh_zero(AutoGrad<DataType> &ag)
+{
+    printf("test_tanh_zero ... ");
+    // tanh(0) = 0, d(tanh)/dx at 0 = 1 - 0^2 = 1
+    TensorHandle a = ag.value_leaf(0.0f);
+    TensorHandle r = ag.value_tanh(a);
+
+    ASSERT_FLOAT_EQ(0.0f, ag.get(r).tensor.values()[0], "tanh(0) == 0");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[0], "d(tanh)/dx at 0 == 1");
+    printf("\n");
+}
+
+static void test_tanh_positive(AutoGrad<DataType> &ag)
+{
+    printf("test_tanh_positive ... ");
+    // tanh(1) = 0.761594, d(tanh)/dx at 1 = 1 - tanh(1)^2 = 0.419974
+    TensorHandle a = ag.value_leaf(1.0f);
+    TensorHandle r = ag.value_tanh(a);
+
+    ASSERT_FLOAT_EQ(0.761594f, ag.get(r).tensor.values()[0], "tanh(1)");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(0.419974f, ag.get(a).tensor.gradients()[0], "d(tanh)/dx at 1");
+    printf("\n");
+}
+
+static void test_tanh_negative(AutoGrad<DataType> &ag)
+{
+    printf("test_tanh_negative ... ");
+    // tanh(-1) = -0.761594, d(tanh)/dx at -1 = 1 - tanh(-1)^2 = 0.419974
+    TensorHandle a = ag.value_leaf(-1.0f);
+    TensorHandle r = ag.value_tanh(a);
+
+    ASSERT_FLOAT_EQ(-0.761594f, ag.get(r).tensor.values()[0], "tanh(-1)");
+
+    ag.backward(r);
+    ASSERT_FLOAT_EQ(0.419974f, ag.get(a).tensor.gradients()[0], "d(tanh)/dx at -1");
     printf("\n");
 }
 
@@ -1116,12 +1161,12 @@ static void test_linear_layer(AutoGrad<DataType> &ag)
     // LinearLayer: out = input @ W
     // input: {seq_len=2, cols=3}, W: {cols=3, rows=2} -> output: {2, 2}
     LinearLayer<DataType> layer;
-    layer.init(ag, 3, 2, 0.1f, "test_linear");
+    layer.init(ag, 3, 2, false, 0.1f, "test_linear");
 
     // Set weights to known values: W = {{1, 2}, {3, 4}, {5, 6}}
     // allocate_parameter_matrix stores in row-major: {3 rows, 2 cols}
     {
-        auto &w = ag.get(layer.parameters).tensor;
+        auto &w = ag.get(layer.weights).tensor;
         DataType *pv = w.values().data();
         pv[0] = 1; pv[1] = 2;  // row 0
         pv[2] = 3; pv[3] = 4;  // row 1
@@ -1162,6 +1207,119 @@ static void test_linear_layer(AutoGrad<DataType> &ag)
         ASSERT_FLOAT_EQ(3.0f, ag.get(input).tensor.gradients()[3], "grad_input[1,0] == W[1,0]");
         ASSERT_FLOAT_EQ(7.0f, ag.get(input).tensor.gradients()[4], "grad_input[1,1] == W[1,1]");
         ASSERT_FLOAT_EQ(11.0f, ag.get(input).tensor.gradients()[5], "grad_input[1,2] == W[1,2]");
+    }
+
+    printf("\n");
+}
+
+// ParameterCheckpoint save/load round-trip ----------------------------------
+static void test_parameter_checkpoint_roundtrip(AutoGrad<DataType> &ag)
+{
+    printf("test_parameter_checkpoint_roundtrip ... ");
+
+    // Create a checkpoint with some parameters
+    ParameterCheckpoint<DataType> checkpoint;
+    checkpoint.init(ag);
+
+    // Initialize with a LinearLayer so we have real parameters
+    LinearLayer<DataType> layer;
+    layer.init(ag, 4, 3, true, 0.1f, "test_layer");
+
+    // Set known values in the weights
+    {
+        DataType *pv = ag.get(layer.weights).tensor.values().data();
+        for (int i = 0; i < 12; i++)
+            pv[i] = DataType(i + 1);  // 1..12
+    }
+
+    // Set known bias values
+    {
+        DataType *bv = ag.get(layer.bias).tensor.values().data();
+        for (int i = 0; i < 3; i++)
+            bv[i] = DataType(100 * (i + 1));  // 100, 200, 300
+    }
+
+    // Forward pass to generate gradients
+    TensorHandle input = ag.tensor_leaf({2, 4});
+    {
+        DataType *iv = ag.get(input).tensor.values().data();
+        for (int i = 0; i < 8; i++)
+            iv[i] = 1.0f;
+    }
+
+    ag.snapshot_parameters();
+    checkpoint.init(ag);
+
+    TensorHandle output = layer.forward(ag, input);
+    ag.backward(output);
+
+    // Update the checkpoint with current values and gradients
+    checkpoint.update(ag, 42);  // step_count = 42
+
+    // --- Save to a stringstream buffer ---
+    std::ostringstream save_stream(std::ios::binary);
+    std::ostringstream err_stream;
+    bool save_ok = checkpoint.save(save_stream, err_stream);
+    ASSERT_INT_EQ(1, save_ok, "save should succeed");
+
+    // --- Load into a fresh checkpoint ---
+    std::istringstream load_stream(save_stream.str(), std::ios::binary);
+    ParameterCheckpoint<DataType> loaded;
+    bool load_ok = loaded.load(load_stream, err_stream);
+    ASSERT_INT_EQ(1, load_ok, "load should succeed");
+
+    // --- Verify the round-tripped data ---
+    ASSERT_INT_EQ(static_cast<int>(checkpoint.step_count),
+                  static_cast<int>(loaded.step_count), "step_count matches");
+    ASSERT_INT_EQ(static_cast<int>(checkpoint.size()),
+                  static_cast<int>(loaded.size()), "values size matches");
+
+    // Verify values
+    for (size_t i = 0; i < checkpoint.values.size(); i++)
+    {
+        ASSERT_FLOAT_EQ(checkpoint.values[i], loaded.values[i],
+                        "value round-trip");
+    }
+
+    // Verify gradients
+    for (size_t i = 0; i < checkpoint.grads.size(); i++)
+    {
+        ASSERT_FLOAT_EQ(checkpoint.grads[i], loaded.grads[i],
+                        "grad round-trip");
+    }
+
+    // Verify leaf parameter records
+    ASSERT_INT_EQ(static_cast<int>(checkpoint.leaf_params.size()),
+                  static_cast<int>(loaded.leaf_params.size()),
+                  "leaf_params count matches");
+
+    for (size_t i = 0; i < checkpoint.leaf_params.size(); i++)
+    {
+        const auto &orig = checkpoint.leaf_params[i];
+        const auto &ld   = loaded.leaf_params[i];
+
+        ASSERT_INT_EQ(orig.param_index, ld.param_index,
+                      "leaf param tensor handle");
+        ASSERT_INT_EQ(orig.shape.dim(0), ld.shape.dim(0),
+                      "leaf param rows");
+        ASSERT_INT_EQ(orig.shape.dim(1), ld.shape.dim(1),
+                      "leaf param cols");
+        ASSERT_INT_EQ(static_cast<int>(orig.name.size()),
+                      static_cast<int>(ld.name.size()),
+                      "leaf param name length");
+        if (!orig.name.empty())
+        {
+            if (orig.name != ld.name)
+            {
+                ++g_failed;
+                printf("  FAIL: leaf param name mismatch (expected '%s', got '%s')",
+                       orig.name.c_str(), ld.name.c_str());
+            }
+            else
+            {
+                ++g_passed;
+            }
+        }
     }
 
     printf("\n");
@@ -1248,6 +1406,15 @@ int main()
     test_gelu_negative(ag);
     ag.reset();
 
+    test_tanh_zero(ag);
+    ag.reset();
+
+    test_tanh_positive(ag);
+    ag.reset();
+
+    test_tanh_negative(ag);
+    ag.reset();
+
     test_select_row(ag);
     ag.reset();
 
@@ -1321,6 +1488,9 @@ int main()
 
     ag.reset();
     test_transformer_block(ag);
+
+    ag.reset();
+    test_parameter_checkpoint_roundtrip(ag);
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;

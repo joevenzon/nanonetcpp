@@ -32,25 +32,31 @@ target_compile_definitions(tests PRIVATE
   $<$<CONFIG:Release>:NDEBUG>
 )
 
-add_executable(example example/example.cpp)
-target_include_directories(example PRIVATE src)
-set_target_properties(example PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/example"
-)
+# Helper function to configure an example target
+function(add_example target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_include_directories(${target_name} PRIVATE src)
+  set_target_properties(${target_name} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/example"
+  )
+  target_compile_options(${target_name} PRIVATE
+    $<$<CONFIG:Debug>:/Od /Zi>
+    $<$<CONFIG:Release>:/O2 /arch:AVX2 /Zi>
+  )
+  target_link_options(${target_name} PRIVATE
+    $<$<CONFIG:Release>:/debug>
+  )
+  target_compile_definitions(${target_name} PRIVATE
+    $<$<CONFIG:Debug>:DEBUG>
+    $<$<CONFIG:Release>:NDEBUG>
+  )
+endfunction()
 
-# Per-config compile options
-target_compile_options(example PRIVATE
-  $<$<CONFIG:Debug>:/Od /Zi>
-  $<$<CONFIG:Release>:/O2 /Ob2 /arch:AVX2 /Zi>
-)
+# Automatically discover all example sources
+file(GLOB EXAMPLE_SOURCES "example/*.cpp")
 
-# Per-config linker options
-target_link_options(example PRIVATE
-  $<$<CONFIG:Release>:/debug>
-)
-
-# Per-config compile definitions
-target_compile_definitions(example PRIVATE
-  $<$<CONFIG:Debug>:DEBUG>
-  $<$<CONFIG:Release>:NDEBUG>
-)
+foreach(ex_src IN LISTS EXAMPLE_SOURCES)
+  # Derive target name from filename (e.g. "example-sine.cpp" -> "example-sine")
+  get_filename_component(ex_name "${ex_src}" NAME_WE)
+  add_example(${ex_name} "${ex_src}")
+endforeach()

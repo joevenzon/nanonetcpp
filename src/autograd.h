@@ -20,9 +20,7 @@ class AutoGrad
 public:
     AutoGrad()
     {
-        nodes.resize(8192);
-        values.resize(131072);
-        grads.resize(131072);
+        init();
     }
 
     // =============================================================================
@@ -47,7 +45,7 @@ public:
 
     struct LeafParameterRecord
     {
-        TensorHandle params;
+        int param_index;
         TensorShape shape;
         std::string name;
     };
@@ -68,8 +66,9 @@ public:
     // =============================================================================
     // ARENA MANAGEMENT
     // =============================================================================
-    void init(size_t node_capacity, size_t value_capacity)
+    void init(unsigned long long seed = 42, size_t node_capacity = 8192, size_t value_capacity = 131072)
     {
+        rng.seed(seed);
         nodes.resize(node_capacity);
         values.resize(value_capacity);
         grads.resize(value_capacity);
@@ -143,7 +142,7 @@ public:
         }
 
         LeafParameterRecord record;
-        record.params = handle;
+        record.param_index = &node.tensor.values()[0] - &values[0];
         record.shape = shape;
         if (optional_name_hint) record.name = optional_name_hint;
         leaf_parameters.push_back(record);
@@ -169,7 +168,7 @@ public:
         }
 
         LeafParameterRecord record;
-        record.params = handle;
+        record.param_index = &node.tensor.values()[0] - &values[0];
         record.shape = shape;
         if (optional_name_hint) record.name = optional_name_hint;
         leaf_parameters.push_back(record);
@@ -560,6 +559,15 @@ public:
         TensorHandle erf_val = value_erf(x_scaled);
         TensorHandle one_plus_erf = value_add_const(erf_val, DataType(1));
         return value_mul_const(value_mul(a, one_plus_erf), DataType(0.5));
+    }
+
+    // Tanh: tanh(x), gradient = 1 - tanh(x)^2
+    TensorHandle value_tanh(TensorHandle a) {
+        constexpr auto fwd = [](auto x) { return std::tanh(x); };
+        constexpr auto g = [](auto go, auto x, auto tanh_x) {
+            return go * (DataType(1) - tanh_x * tanh_x);
+        };
+        return make_unary_ew<fwd, g>(a);
     }
 
     // =============================================================================
@@ -1526,5 +1534,13 @@ struct GeLU
     static TensorHandle apply(AutoGrad<DataType> & ag, TensorHandle x)
     {
         return ag.value_gelu(x);
+    }
+};
+template <typename DataType>
+struct Tanh
+{
+    static TensorHandle apply(AutoGrad<DataType> & ag, TensorHandle x)
+    {
+        return ag.value_tanh(x);
     }
 };

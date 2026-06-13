@@ -16,16 +16,16 @@ struct MLPLayer
     LinearLayer<DataType> fc2;
     int hidden_dim = 0;
 
-    // pass zero into std_dev to use He/Kaiming initialization
+    // pass zero into std_dev to use He/Kaiming gaussian initialization
     void init(AutoGrad<DataType> & ag, int in_dim, int hidden_dim, float std_dev, const char * optional_name_hint = nullptr)
     {
         this->hidden_dim = hidden_dim;
-        DataType std_dev1 = std_dev > 0 ? std_dev : 1.0 / std::sqrt(static_cast<DataType>(in_dim));
-        DataType std_dev2 = std_dev > 0 ? std_dev : 1.0 / std::sqrt(static_cast<DataType>(hidden_dim));
-        fc1.init(ag, in_dim, hidden_dim, std_dev1,
-            optional_name_hint ? optional_name_hint : "mlp_fc1");
-        fc2.init(ag, hidden_dim, in_dim, std_dev2,
-            optional_name_hint ? optional_name_hint : "mlp_fc2");
+        DataType std_dev1 = std_dev > 0 ? std_dev : DataType(2) / std::sqrt(static_cast<DataType>(in_dim));
+        DataType std_dev2 = std_dev > 0 ? std_dev : DataType(2) / std::sqrt(static_cast<DataType>(hidden_dim));
+        fc1.init(ag, in_dim, hidden_dim,
+            false, std_dev1, optional_name_hint ? optional_name_hint : "mlp_fc1");
+        fc2.init(ag, hidden_dim, in_dim,
+            false, std_dev2, optional_name_hint ? optional_name_hint : "mlp_fc2");
     }
 
     // {seq_len, in_dim} -> {seq_len, in_dim}

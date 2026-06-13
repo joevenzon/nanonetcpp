@@ -19,10 +19,10 @@ struct AttentionLayer
         this->head_dim = emb_dim / num_heads;
 
         DataType std_dev = 1.0 / std::sqrt(emb_dim);
-        wq.init(ag, emb_dim, emb_dim, std_dev, "wq");
-        wk.init(ag, emb_dim, emb_dim, std_dev, "wk");
-        wv.init(ag, emb_dim, emb_dim, std_dev, "wv");
-        wo.init(ag, emb_dim, emb_dim, std_dev, "wo");
+        wq.init(ag, emb_dim, emb_dim, false, std_dev, "wq");
+        wk.init(ag, emb_dim, emb_dim, false, std_dev, "wk");
+        wv.init(ag, emb_dim, emb_dim, false, std_dev, "wv");
+        wo.init(ag, emb_dim, emb_dim, false, std_dev, "wo");
     }
 
     // Whole-sequence forward with causal masking.
@@ -39,9 +39,9 @@ struct AttentionLayer
         // STEP 1: PROJECT TO Q, K, V (Standard Linear Projections)
         // -------------------------------------------------------------------
         // input: {seq_len, emb_dim}, weights: {emb_dim, emb_dim} -> {seq_len, emb_dim}
-        TensorHandle Q = ag.value_matmul(input, wq.parameters);
-        TensorHandle K = ag.value_matmul(input, wk.parameters);
-        TensorHandle V = ag.value_matmul(input, wv.parameters);
+        TensorHandle Q = ag.value_matmul(input, wq.weights);
+        TensorHandle K = ag.value_matmul(input, wk.weights);
+        TensorHandle V = ag.value_matmul(input, wv.weights);
 
         // -------------------------------------------------------------------
         // STEP 2: BUILD CAUSAL MASK
