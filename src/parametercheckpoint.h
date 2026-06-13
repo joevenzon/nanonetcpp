@@ -44,27 +44,16 @@ struct ParameterCheckpoint
 		update(grad);
 	}
 
-	// pass accumulate=true during a gradient accumulation cycle
-	void update(AutoGrad<DataType> & grad, bool accumulate = false)
+	void update(AutoGrad<DataType> & grad)
 	{
 		for (int i = 0; i < values.size(); i++)
 		{
 			values[i] = grad.get_values()[i];
 		}
 
-		if (accumulate)
+		for (int i = 0; i < values.size(); i++)
 		{
-			for (int i = 0; i < values.size(); i++)
-			{
-				grads[i] += grad.get_gradients()[i];
-			}
-		}
-		else
-		{
-			for (int i = 0; i < values.size(); i++)
-			{
-				grads[i] = grad.get_gradients()[i];
-			}
+			grads[i] = grad.get_gradients()[i];
 		}
 
 		leaf_params.assign(grad.get_leaf_parameters().begin(), grad.get_leaf_parameters().end());
