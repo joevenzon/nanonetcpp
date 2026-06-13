@@ -20,7 +20,7 @@
 template <typename DataType>
 struct EmbeddingLayer
 {
-    ParameterHandle parameters; // weight matrix [num_embeddings x emb_dim]
+    TensorHandle parameters; // weight matrix [num_embeddings x emb_dim]
 
     void init(AutoGrad<DataType> & grad, int num_embeddings, int emb_dim, DataType std_dev, const char * optional_name_hint = NULL)
     {
@@ -30,8 +30,8 @@ struct EmbeddingLayer
 
     // @param token_id  Integer index into the embedding table
     // Returns a tensor node of shape {emb_dim} — the embedding vector for that token.
-    NodeHandle forward(AutoGrad<DataType> & grad, int token_id)
+    TensorHandle forward(AutoGrad<DataType> & grad, int token_id)
     {
-        return grad.value_select_row(parameters.start, token_id);
+        return grad.value_select_row(parameters, token_id);
     }
 };

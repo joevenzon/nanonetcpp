@@ -19,7 +19,7 @@ struct SoftmaxLayer
 {
     // `input` is a tensor node of shape {N} (or {N, 1}).
     // Returns the output tensor node of the same shape.
-    NodeHandle forward(AutoGrad<DataType> & grad, NodeHandle input)
+    TensorHandle forward(AutoGrad<DataType> & grad, TensorHandle input)
     {
         // Step 1: Find the maximum logit value for numerical stability.
         // Read the raw value directly — don't create a graph node, because max
@@ -34,13 +34,13 @@ struct SoftmaxLayer
         }
 
         // Step 2: Subtract max from all logits (elementwise, same shape).
-        NodeHandle shifted = grad.value_sub_const(input, max_value);
+        TensorHandle shifted = grad.value_sub_const(input, max_value);
 
         // Step 3: Exponentiate each shifted logit.
-        NodeHandle exp_shifted = grad.value_exp(shifted);
+        TensorHandle exp_shifted = grad.value_exp(shifted);
 
         // Step 4: Sum the exponentials -> scalar {1}.
-        NodeHandle sum_exps = grad.value_sum(exp_shifted);
+        TensorHandle sum_exps = grad.value_sum(exp_shifted);
 
         // Step 5: Divide by the scalar sum to normalize.
         // Uses value_div_scalar so the scalar isn't materialized as a tiled tensor.

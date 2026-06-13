@@ -26,11 +26,11 @@ struct MLPLayer
     }
 
     // {seq_len, in_dim} -> {seq_len, in_dim}
-    NodeHandle forward(AutoGrad<DataType> & ag, NodeHandle input)
+    TensorHandle forward(AutoGrad<DataType> & ag, TensorHandle input)
     {
         assert(hidden_dim > 0);
 
-        NodeHandle hidden = fc1.forward(ag, input);
+        TensorHandle hidden = fc1.forward(ag, input);
         hidden = Activation::apply(ag, hidden);
         return fc2.forward(ag, hidden);
     }

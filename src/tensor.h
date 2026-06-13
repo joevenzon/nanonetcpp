@@ -38,6 +38,8 @@ struct TensorShape
 
 	int rank() const { return (int)dims.size(); }
 
+	int dim(int dimension) const { return dimension < dims.size() ? dims[dimension] : 1; }
+
 	PlainArray <int, MAX_TENSOR_DIM> dims;
 };
 

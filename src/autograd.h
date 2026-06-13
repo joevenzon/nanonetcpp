@@ -35,7 +35,7 @@ public:
 
         Tensor <DataType> tensor;
 
-        PlainArray <NodeHandle, k_max_children> children; // Pool indices of up to k_max_children child nodes
+        PlainArray <TensorHandle, k_max_children> children; // Pool indices of up to k_max_children child nodes
 
         // Backward op: given access to the engine, propagate this node's grad
         // into the grad buffers of its children. Empty for leaves/constants.
@@ -47,7 +47,8 @@ public:
 
     struct LeafParameterRecord
     {
-        ParameterHandle params;
+        TensorHandle params;
+        TensorShape shape;
         std::string name;
     };
 
@@ -82,9 +83,9 @@ public:
     }
 
     // this also allocates the node's corresponding tensor
-    NodeHandle allocate_node(const TensorShape & shape)
+    TensorHandle allocate_node(const TensorShape & shape)
     {
-        NodeHandle h(static_cast<int>(nodes.allocate()));
+        TensorHandle h(static_cast<int>(nodes.allocate()));
         Node & node = get(h);
 
         node.tensor = allocate_tensor(shape);
@@ -100,9 +101,9 @@ public:
     // Each constructor allocates a new node in the pool and initializes its fields.
 
     // A leaf tensor of the given shape, filled by `fill`.
-    NodeHandle tensor_leaf(const TensorShape & shape, DataType fill = DataType(0))
+    TensorHandle tensor_leaf(const TensorShape & shape, DataType fill = DataType(0))
     {
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         const int n = shape.numel();
@@ -112,12 +113,12 @@ public:
     }
 
     // Scalar convenience (rank-1, single element)
-    NodeHandle value_leaf(DataType data)
+    TensorHandle value_leaf(DataType data)
     {
-        NodeHandle h = tensor_leaf({ 1 }, data);
+        TensorHandle h = tensor_leaf({ 1 }, data);
         return h;
     }
-    NodeHandle value_const(DataType data) { return value_leaf(data); }
+    TensorHandle value_const(DataType data) { return value_leaf(data); }
 
     // Allocate a matrix of leaf nodes in the pool and return the starting offset & length.
     // @param num_rows    Number of rows in the matrix
@@ -125,9 +126,10 @@ public:
     // @param mean        Initial value mean
     // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
-    ParameterHandle allocate_parameter_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
+    TensorHandle allocate_parameter_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
-        NodeHandle handle = allocate_node(TensorShape({ num_rows, num_cols }));
+        TensorShape shape({ num_rows, num_cols });
+        TensorHandle handle = allocate_node(shape);
         Node & node = get(handle);
         int total_elements = num_rows * num_cols;
         for (int k = 0; k < total_elements; k++)
@@ -138,12 +140,12 @@ public:
                 node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
-        ParameterHandle result(handle, num_rows, num_cols);
         LeafParameterRecord record;
-        record.params = result;
+        record.params = handle;
+        record.shape = shape;
         if (optional_name_hint) record.name = optional_name_hint;
         leaf_parameters.push_back(record);
-        return result;
+        return handle;
     }
 
     // Allocate a matrix of leaf nodes in the pool and return the starting offset & length.
@@ -151,9 +153,10 @@ public:
     // @param mean        Initial value mean
     // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
-    ParameterHandle allocate_parameter_vector(int num_elems, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
+    TensorHandle allocate_parameter_vector(int num_elems, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
-        NodeHandle handle = allocate_node(TensorShape({ num_elems }));
+        TensorShape shape({ num_elems });
+        TensorHandle handle = allocate_node(shape);
         Node & node = get(handle);
         for (int k = 0; k < num_elems; k++)
         {
@@ -163,12 +166,12 @@ public:
                 node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
-        ParameterHandle result(handle, num_elems, 1);
         LeafParameterRecord record;
-        record.params = result;
+        record.params = handle;
+        record.shape = shape;
         if (optional_name_hint) record.name = optional_name_hint;
         leaf_parameters.push_back(record);
-        return result;
+        return handle;
     }
 
     void reset()
@@ -203,7 +206,7 @@ public:
 
     std::span<const LeafParameterRecord> get_leaf_parameters() const { return std::span<const LeafParameterRecord>(leaf_parameters); }
 
-    Node & get(NodeHandle index)
+    Node & get(TensorHandle index)
     {
         return nodes[index.get_node_index()];
     }
@@ -246,12 +249,12 @@ public:
         for (int i = 0; i < n; i++) { ga[i] += go[i]; gb[i] += go[i]; }
     }
 
-    NodeHandle value_add(NodeHandle a, NodeHandle b)
+    TensorHandle value_add(TensorHandle a, TensorHandle b)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
         assert(shape == get(b).tensor.get_shape());
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -277,12 +280,12 @@ public:
         for (int i = 0; i < n; i++) { ga[i] += go[i]; gb[i] -= go[i]; }
     }
 
-    NodeHandle value_sub(NodeHandle a, NodeHandle b)
+    TensorHandle value_sub(TensorHandle a, TensorHandle b)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
         assert(shape == get(b).tensor.get_shape());
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -311,12 +314,12 @@ public:
         for (int i = 0; i < n; i++) { ga[i] += go[i] * pb[i]; gb[i] += go[i] * pa[i]; }
     }
 
-    NodeHandle value_mul(NodeHandle a, NodeHandle b)
+    TensorHandle value_mul(TensorHandle a, TensorHandle b)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
         assert(shape == get(b).tensor.get_shape());
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -348,12 +351,12 @@ public:
         }
     }
 
-    NodeHandle value_div(NodeHandle a, NodeHandle b)
+    TensorHandle value_div(TensorHandle a, TensorHandle b)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
         assert(shape == get(b).tensor.get_shape());
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -382,11 +385,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i];
     }
 
-    NodeHandle value_add_const(NodeHandle a, DataType c)
+    TensorHandle value_add_const(TensorHandle a, DataType c)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -410,11 +413,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * c;
     }
 
-    NodeHandle value_mul_const(NodeHandle a, DataType c)
+    TensorHandle value_mul_const(TensorHandle a, DataType c)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -432,11 +435,11 @@ public:
         return h;
     }
 
-    NodeHandle value_sub_const(NodeHandle a, DataType c)
+    TensorHandle value_sub_const(TensorHandle a, DataType c)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -462,11 +465,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * inv_c;
     }
 
-    NodeHandle value_div_const(NodeHandle a, DataType c)
+    TensorHandle value_div_const(TensorHandle a, DataType c)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -494,9 +497,9 @@ public:
         for (int i = 0; i < n; i++) ga[0] += go[i];
     }
 
-    NodeHandle value_tile_scalar(NodeHandle scalar, int n)
+    TensorHandle value_tile_scalar(TensorHandle scalar, int n)
     {
-        NodeHandle h = allocate_node(TensorShape{ n });
+        TensorHandle h = allocate_node(TensorShape{ n });
         Node & node = get(h);
 
         node.children.push_back(scalar);
@@ -511,7 +514,7 @@ public:
     }
 
     // =============================================================================
-    // SCALAR BROADCAST OPS (scalar is a NodeHandle of shape {1}, not a constant)
+    // SCALAR BROADCAST OPS (scalar is a TensorHandle of shape {1}, not a constant)
     // These avoid materializing a tiled tensor — the scalar value is read once
     // and applied across all elements. Gradients flow back to the scalar node.
     // =============================================================================
@@ -530,12 +533,12 @@ public:
         }
     }
 
-    NodeHandle value_mul_scalar(NodeHandle input, NodeHandle scalar)
+    TensorHandle value_mul_scalar(TensorHandle input, TensorHandle scalar)
     {
         const TensorShape& shape = get(input).tensor.get_shape();
         assert(get(scalar).tensor.numel() == 1);
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(input);
@@ -569,12 +572,12 @@ public:
         }
     }
 
-    NodeHandle value_div_scalar(NodeHandle input, NodeHandle scalar)
+    TensorHandle value_div_scalar(TensorHandle input, TensorHandle scalar)
     {
         const TensorShape& shape = get(input).tensor.get_shape();
         assert(get(scalar).tensor.numel() == 1);
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(input);
@@ -607,11 +610,11 @@ public:
         }
     }
 
-    NodeHandle value_relu(NodeHandle a)
+    TensorHandle value_relu(TensorHandle a)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -637,11 +640,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * (DataType(1) / pa[i]);
     }
 
-    NodeHandle value_log(NodeHandle a)
+    TensorHandle value_log(TensorHandle a)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -665,11 +668,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * po[i];
     }
 
-    NodeHandle value_exp(NodeHandle a)
+    TensorHandle value_exp(TensorHandle a)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -694,11 +697,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * p * std::pow(pa[i], p - DataType(1));
     }
 
-    NodeHandle value_pow(NodeHandle a, DataType p)
+    TensorHandle value_pow(TensorHandle a, DataType p)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -726,11 +729,11 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go[i] * TWO_OVER_SQRT_PI * std::exp(-pa[i] * pa[i]);
     }
 
-    NodeHandle value_erf(NodeHandle a)
+    TensorHandle value_erf(TensorHandle a)
     {
         const TensorShape& shape = get(a).tensor.get_shape();
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -746,12 +749,12 @@ public:
     }
 
     // GELU via the exact erf formulation, composed from existing ops (works tensor-wide).
-    NodeHandle value_gelu(NodeHandle a)
+    TensorHandle value_gelu(TensorHandle a)
     {
         static const DataType INV_SQRT2 = DataType(1) / std::sqrt(DataType(2));
-        NodeHandle x_scaled = value_mul_const(a, INV_SQRT2);
-        NodeHandle erf_val = value_erf(x_scaled);
-        NodeHandle one_plus_erf = value_add_const(erf_val, DataType(1));
+        TensorHandle x_scaled = value_mul_const(a, INV_SQRT2);
+        TensorHandle erf_val = value_erf(x_scaled);
+        TensorHandle one_plus_erf = value_add_const(erf_val, DataType(1));
         return value_mul_const(value_mul(a, one_plus_erf), DataType(0.5));
     }
 
@@ -769,14 +772,14 @@ public:
         for (int c = 0; c < num_cols; c++) ga[row_index * num_cols + c] += go[c];
     }
 
-    NodeHandle value_select_row(NodeHandle matrix, int row_index)
+    TensorHandle value_select_row(TensorHandle matrix, int row_index)
     {
         const Node & nm = get(matrix);
         assert(nm.tensor.get_shape().rank() == 2);
         const int num_cols = nm.tensor.get_shape().dims[1];
         assert(row_index >= 0 && row_index < nm.tensor.get_shape().dims[0]);
 
-        NodeHandle h = allocate_node(TensorShape{ num_cols });
+        TensorHandle h = allocate_node(TensorShape{ num_cols });
         Node & node = get(h);
 
         node.children.push_back(matrix);
@@ -807,7 +810,7 @@ public:
             for (int c = 0; c < count; c++) ga[m * num_cols + col_start + c] += go[m * count + c];
     }
 
-    NodeHandle value_slice_cols(NodeHandle matrix, int col_start, int count)
+    TensorHandle value_slice_cols(TensorHandle matrix, int col_start, int count)
     {
         const Node & nm = get(matrix);
         assert(nm.tensor.get_shape().rank() == 2);
@@ -815,7 +818,7 @@ public:
         const int num_cols = nm.tensor.get_shape().dims[1];
         assert(col_start >= 0 && col_start + count <= num_cols);
 
-        NodeHandle h = allocate_node(TensorShape{ M, count });
+        TensorHandle h = allocate_node(TensorShape{ M, count });
         Node & node = get(h);
 
         node.children.push_back(matrix);
@@ -855,7 +858,7 @@ public:
         }
     }
 
-    NodeHandle value_scatter_row(NodeHandle dst, NodeHandle src, int row_index)
+    TensorHandle value_scatter_row(TensorHandle dst, TensorHandle src, int row_index)
     {
         const Node & nd = get(dst);
         const Node & ns = get(src);
@@ -866,7 +869,7 @@ public:
         assert(ns.tensor.numel() == num_cols);
         assert(row_index >= 0 && row_index < M);
 
-        NodeHandle h = allocate_node(TensorShape{ M, num_cols });
+        TensorHandle h = allocate_node(TensorShape{ M, num_cols });
         Node & node = get(h);
 
         node.children.push_back(dst);
@@ -917,7 +920,7 @@ public:
         }
     }
 
-    NodeHandle value_scatter_cols(NodeHandle dst, NodeHandle src, int col_start)
+    TensorHandle value_scatter_cols(TensorHandle dst, TensorHandle src, int col_start)
     {
         const Node & nd = get(dst);
         const Node & ns = get(src);
@@ -929,7 +932,7 @@ public:
         assert(ns.tensor.get_shape().dims[0] == M);
         assert(col_start >= 0 && col_start + K <= N);
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(dst);
@@ -968,13 +971,13 @@ public:
         ga[idx] += go;
     }
 
-    NodeHandle value_select_element(NodeHandle a, int idx)
+    TensorHandle value_select_element(TensorHandle a, int idx)
     {
         const Node & na = get(a);
         const int n = na.tensor.numel();
         assert(idx >= 0 && idx < n);
 
-        NodeHandle h = allocate_node(TensorShape{ 1 });
+        TensorHandle h = allocate_node(TensorShape{ 1 });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1023,7 +1026,7 @@ public:
         }
     }
 
-    NodeHandle value_matmul_general(NodeHandle a, NodeHandle b)
+    TensorHandle value_matmul_general(TensorHandle a, TensorHandle b)
     {
         const Node & na = get(a);
         const Node & nb = get(b);
@@ -1033,7 +1036,7 @@ public:
         assert(nb.tensor.get_shape().dims[0] == K);
         const int N = nb.tensor.get_shape().dims[1];
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1125,7 +1128,7 @@ public:
         }
     }
 
-    NodeHandle value_matmul_float(NodeHandle a, NodeHandle b)
+    TensorHandle value_matmul_float(TensorHandle a, TensorHandle b)
     {
         static_assert(std::is_same<DataType, float>::value, "AVX2 path assumes float");
 
@@ -1137,7 +1140,7 @@ public:
         assert(nb.tensor.get_shape().dims[0] == K);
         const int N = nb.tensor.get_shape().dims[1];
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1176,7 +1179,7 @@ public:
         return h;
     }
 
-    NodeHandle value_matmul(NodeHandle a, NodeHandle b)
+    TensorHandle value_matmul(TensorHandle a, TensorHandle b)
     {
         if constexpr (std::is_same_v<DataType, float>)
         {
@@ -1225,7 +1228,7 @@ public:
             }
     }
 
-    NodeHandle value_matmul_bt(NodeHandle a, NodeHandle b)
+    TensorHandle value_matmul_bt(TensorHandle a, TensorHandle b)
     {
         const Node & na = get(a);
         const Node & nb = get(b);
@@ -1235,7 +1238,7 @@ public:
         assert(nb.tensor.get_shape().dims[1] == K);
         const int N = nb.tensor.get_shape().dims[0];
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1277,13 +1280,13 @@ public:
         }
     }
 
-    NodeHandle value_softmax_rows(NodeHandle a)
+    TensorHandle value_softmax_rows(TensorHandle a)
     {
         const TensorShape & shape = get(a).tensor.get_shape();
         assert(shape.rank() == 2);
         const int M = shape.dims[0], N = shape.dims[1];
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
         node.children.push_back(a);
 
@@ -1341,14 +1344,14 @@ public:
         }
     }
 
-    NodeHandle value_log_softmax_rows(NodeHandle a)
+    TensorHandle value_log_softmax_rows(TensorHandle a)
     {
         const TensorShape & shape = get(a).tensor.get_shape();
         assert(shape.rank() == 2);
         const int M = shape.dims[0];
         const int N = shape.dims[1];
 
-        NodeHandle h = allocate_node(shape);
+        TensorHandle h = allocate_node(shape);
         Node & node = get(h);
         node.children.push_back(a);
 
@@ -1386,7 +1389,7 @@ public:
         ga[idx] += go; // gradient only flows to the argmax element
     }
 
-    NodeHandle value_max(NodeHandle a)
+    TensorHandle value_max(TensorHandle a)
     {
         const Node & na = get(a);
         const DataType * pa = na.tensor.values().data();
@@ -1399,7 +1402,7 @@ public:
             if (pa[i] > max_val) { max_val = pa[i]; max_idx = i; }
         }
 
-        NodeHandle h = allocate_node(TensorShape{ 1 });
+        TensorHandle h = allocate_node(TensorShape{ 1 });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1423,9 +1426,9 @@ public:
         for (int i = 0; i < n; i++) ga[i] += go; // broadcast scalar grad
     }
 
-    NodeHandle value_sum(NodeHandle a)
+    TensorHandle value_sum(TensorHandle a)
     {
-        NodeHandle h = allocate_node(TensorShape{ 1 });
+        TensorHandle h = allocate_node(TensorShape{ 1 });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1461,14 +1464,14 @@ public:
         }
     }
 
-    NodeHandle value_sum_rows(NodeHandle a)
+    TensorHandle value_sum_rows(TensorHandle a)
     {
         const Node & na = get(a);
         assert(na.tensor.get_shape().rank() == 2);
         const int M = na.tensor.get_shape().dims[0];
         const int N = na.tensor.get_shape().dims[1];
 
-        NodeHandle h = allocate_node(TensorShape{ M });
+        TensorHandle h = allocate_node(TensorShape{ M });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1514,7 +1517,7 @@ public:
             }
     }
 
-    NodeHandle value_scale_rows(NodeHandle a, NodeHandle v)
+    TensorHandle value_scale_rows(TensorHandle a, TensorHandle v)
     {
         const Node & na = get(a);
         const Node & nv = get(v);
@@ -1524,7 +1527,7 @@ public:
         const int N = na.tensor.get_shape().dims[1];
         assert(nv.tensor.get_shape().dims[0] == M);
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1569,7 +1572,7 @@ public:
             }
     }
 
-    NodeHandle value_mul_rows(NodeHandle a, NodeHandle b)
+    TensorHandle value_mul_rows(TensorHandle a, TensorHandle b)
     {
         const Node & na = get(a);
         const Node & nb = get(b);
@@ -1579,7 +1582,7 @@ public:
         const int N = na.tensor.get_shape().dims[1];
         assert(nb.tensor.get_shape().dims[0] == N);
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1622,7 +1625,7 @@ public:
             }
     }
 
-    NodeHandle value_add_rows(NodeHandle a, NodeHandle b)
+    TensorHandle value_add_rows(TensorHandle a, TensorHandle b)
     {
         const Node & na = get(a);
         const Node & nb = get(b);
@@ -1632,7 +1635,7 @@ public:
         const int N = na.tensor.get_shape().dims[1];
         assert(nb.tensor.get_shape().dims[0] == N);
 
-        NodeHandle h = allocate_node(TensorShape{ M, N });
+        TensorHandle h = allocate_node(TensorShape{ M, N });
         Node & node = get(h);
 
         node.children.push_back(a);
@@ -1659,7 +1662,7 @@ public:
     // yields correct accumulation. We zero the grad arena, seed the root with 1,
     // then scatter.
     //
-    void backward(NodeHandle root_index)
+    void backward(TensorHandle root_index)
     {
         // Zero all grads currently in use.
         std::fill(grads.span().begin(), grads.span().end(), DataType(0));
@@ -1695,7 +1698,7 @@ private:
 template <typename DataType>
 struct ReLU
 {
-    static NodeHandle apply(AutoGrad<DataType> & ag, NodeHandle x)
+    static TensorHandle apply(AutoGrad<DataType> & ag, TensorHandle x)
     {
         return ag.value_relu(x);
     }
@@ -1703,7 +1706,7 @@ struct ReLU
 template <typename DataType>
 struct GeLU
 {
-    static NodeHandle apply(AutoGrad<DataType> & ag, NodeHandle x)
+    static TensorHandle apply(AutoGrad<DataType> & ag, TensorHandle x)
     {
         return ag.value_gelu(x);
     }

@@ -28,7 +28,7 @@ struct AttentionLayer
     // Whole-sequence forward with causal masking.
     // input : tensor node of shape {seq_len, emb_dim}
     // returns: tensor node of shape {seq_len, emb_dim}
-    NodeHandle forward(AutoGrad<DataType> & ag, NodeHandle input)
+    TensorHandle forward(AutoGrad<DataType> & ag, TensorHandle input)
     {
         const typename AutoGrad<DataType>::Node & n_input = ag.get(input);
         assert(n_input.tensor.get_shape().rank() == 2);
@@ -39,14 +39,14 @@ struct AttentionLayer
         // STEP 1: PROJECT TO Q, K, V (Standard Linear Projections)
         // -------------------------------------------------------------------
         // input: {seq_len, emb_dim}, weights: {emb_dim, emb_dim} -> {seq_len, emb_dim}
-        NodeHandle Q = ag.value_matmul(input, wq.parameters.start);
-        NodeHandle K = ag.value_matmul(input, wk.parameters.start);
-        NodeHandle V = ag.value_matmul(input, wv.parameters.start);
+        TensorHandle Q = ag.value_matmul(input, wq.parameters);
+        TensorHandle K = ag.value_matmul(input, wk.parameters);
+        TensorHandle V = ag.value_matmul(input, wv.parameters);
 
         // -------------------------------------------------------------------
         // STEP 2: BUILD CAUSAL MASK
         // -------------------------------------------------------------------
-        NodeHandle mask = ag.tensor_leaf({ seq_len, seq_len }, DataType(0));
+        TensorHandle mask = ag.tensor_leaf({ seq_len, seq_len }, DataType(0));
         {
             const std::span <DataType> & mv = ag.get(mask).tensor.values();
             for (int qi = 0; qi < seq_len; qi++)
@@ -61,24 +61,24 @@ struct AttentionLayer
 
         // We create a "concatenated" buffer to hold the output of all heads side-by-side
         // Shape: {seq_len, emb_dim} (since num_heads * head_dim == emb_dim)
-        NodeHandle concatenated = ag.tensor_leaf({ seq_len, emb_dim }, DataType(0));
+        TensorHandle concatenated = ag.tensor_leaf({ seq_len, emb_dim }, DataType(0));
 
         for (int h = 0; h < num_heads; h++)
         {
             // Slice the large Q, K, V into head-specific chunks: {seq_len, head_dim}
-            NodeHandle Q_h = ag.value_slice_cols(Q, h * head_dim, head_dim);
-            NodeHandle K_h = ag.value_slice_cols(K, h * head_dim, head_dim);
-            NodeHandle V_h = ag.value_slice_cols(V, h * head_dim, head_dim);
+            TensorHandle Q_h = ag.value_slice_cols(Q, h * head_dim, head_dim);
+            TensorHandle K_h = ag.value_slice_cols(K, h * head_dim, head_dim);
+            TensorHandle V_h = ag.value_slice_cols(V, h * head_dim, head_dim);
 
             // Scaled Dot-Product: (Q_h @ K_h^T) * scale -> {seq_len, seq_len}
-            NodeHandle scores = ag.value_mul_const(
+            TensorHandle scores = ag.value_mul_const(
                 ag.value_matmul_bt(Q_h, K_h), scale);
 
             // Apply causal mask and row-wise softmax -> {seq_len, seq_len}
-            NodeHandle weights = ag.value_softmax_rows(ag.value_add(scores, mask));
+            TensorHandle weights = ag.value_softmax_rows(ag.value_add(scores, mask));
 
             // Weighted values: {seq_len, seq_len} @ {seq_len, head_dim} -> {seq_len, head_dim}
-            NodeHandle head_out = ag.value_matmul(weights, V_h);
+            TensorHandle head_out = ag.value_matmul(weights, V_h);
 
             // Place this head's output into its dedicated slot in the concatenated matrix.
             // concatenated: {seq_len, emb_dim}, head_out: {seq_len, head_dim}, start_col: h * head_dim

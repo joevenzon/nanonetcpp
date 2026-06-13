@@ -24,17 +24,17 @@ struct TransformerBlock
 
     // input  : tensor node of shape {seq_len, emb_dim}
     // returns: tensor node of shape {seq_len, emb_dim}
-    NodeHandle forward(AutoGrad<DataType> & ag, NodeHandle input)
+    TensorHandle forward(AutoGrad<DataType> & ag, TensorHandle input)
     {
         // --- attention sub-block with residual ---
-        NodeHandle normed1 = norm1.forward(ag, input);
-        NodeHandle attn_out = attention.forward(ag, normed1);
-        NodeHandle residual1 = ag.value_add(input, attn_out);
+        TensorHandle normed1 = norm1.forward(ag, input);
+        TensorHandle attn_out = attention.forward(ag, normed1);
+        TensorHandle residual1 = ag.value_add(input, attn_out);
 
         // --- mlp sub-block with residual ---
-        NodeHandle normed2 = norm2.forward(ag, residual1);
-        NodeHandle mlp_out = mlp.forward(ag, normed2);
-        NodeHandle output = ag.value_add(residual1, mlp_out);
+        TensorHandle normed2 = norm2.forward(ag, residual1);
+        TensorHandle mlp_out = mlp.forward(ag, normed2);
+        TensorHandle output = ag.value_add(residual1, mlp_out);
 
         return output;
     }

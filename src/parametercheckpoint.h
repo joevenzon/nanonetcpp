@@ -91,7 +91,7 @@ struct ParameterCheckpoint
 	///     - LeafParamCount:   4 bytes  uint32_t (number of LeafParameterRecord entries)
 	///   Leaf Parameter Records (variable)
 	///     For each record:
-	///       - params.start:   4 bytes  int (NodeHandle)
+	///       - params.start:   4 bytes  int (TensorHandle)
 	///       - params.rows:    4 bytes  int
 	///       - params.cols:    4 bytes  int
 	///       - name.length:    4 bytes  uint32_t
@@ -142,11 +142,13 @@ struct ParameterCheckpoint
 		}
 
 		// --- leaf param records ---
-		for (auto& rec : leaf_params)
+		for (const AutoGrad<DataType>::LeafParameterRecord & rec : leaf_params)
 		{
-			out.write(reinterpret_cast<const char *>(&rec.params.start), sizeof(rec.params.start));
-			out.write(reinterpret_cast<const char *>(&rec.params.rows), sizeof(rec.params.rows));
-			out.write(reinterpret_cast<const char *>(&rec.params.cols), sizeof(rec.params.cols));
+			out.write(reinterpret_cast<const char *>(&rec.params), sizeof(rec.params));
+			int rows = rec.shape.dim(0);
+			int cols = rec.shape.dim(1);
+			out.write(reinterpret_cast<const char *>(&rows), sizeof(rows));
+			out.write(reinterpret_cast<const char *>(&cols), sizeof(cols));
 
 			uint32_t nameLen = static_cast<uint32_t>(rec.name.size());
 			out.write(reinterpret_cast<const char *>(&nameLen), sizeof(nameLen));
@@ -237,7 +239,7 @@ struct ParameterCheckpoint
 		for (uint32_t i = 0; i < leafCount; i++)
 		{
 			typename AutoGrad<DataType>::LeafParameterRecord rec;
-			in.read(reinterpret_cast<char *>(&rec.param.start), sizeof(rec.param.start));
+			in.read(reinterpret_cast<char *>(&rec.param.tensor()), sizeof(rec.param.tensor()));
 			in.read(reinterpret_cast<char *>(&rec.param.rows), sizeof(rec.param.rows));
 			in.read(reinterpret_cast<char *>(&rec.param.cols), sizeof(rec.param.cols));
 

@@ -11,7 +11,7 @@
 template <typename DataType>
 struct LinearLayer
 {
-    ParameterHandle parameters; // weight matrix W {in_dim, out_dim}
+    TensorHandle parameters; // weight matrix W {in_dim, out_dim}
 
     void init(AutoGrad<DataType> & grad, int num_rows, int num_cols,
         DataType std_dev, const char * optional_name_hint = nullptr)
@@ -22,8 +22,8 @@ struct LinearLayer
 
     // `input` has shape {seq_len, in_dim}.  parameters is {in_dim, out_dim}.
     // Returns the output tensor node of shape {seq_len, out_dim}.
-    NodeHandle forward(AutoGrad<DataType> & grad, NodeHandle input)
+    TensorHandle forward(AutoGrad<DataType> & grad, TensorHandle input)
     {
-        return grad.value_matmul(input, parameters.start);
+        return grad.value_matmul(input, parameters);
     }
 };

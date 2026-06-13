@@ -49,7 +49,7 @@ static int g_failed  = 0;
 static void test_leaf_node(AutoGrad<DataType> &ag)
 {
     printf("test_leaf_node ... ");
-    NodeHandle h = ag.value_leaf(42.0f);
+    TensorHandle h = ag.value_leaf(42.0f);
     ASSERT_FLOAT_EQ(42.0f, ag.get(h).tensor.values()[0], "leaf data");
     ASSERT_FLOAT_EQ(0.0f,  ag.get(h).tensor.gradients()[0], "leaf grad initialized to 0");
     ASSERT_INT_EQ(0, ag.get(h).children.size(), "leaf has no children");
@@ -60,9 +60,9 @@ static void test_leaf_node(AutoGrad<DataType> &ag)
 static void test_add(AutoGrad<DataType> &ag)
 {
     printf("test_add ... ");
-    NodeHandle a = ag.value_leaf(3.0f);
-    NodeHandle b = ag.value_leaf(5.0f);
-    NodeHandle s = ag.value_add(a, b);
+    TensorHandle a = ag.value_leaf(3.0f);
+    TensorHandle b = ag.value_leaf(5.0f);
+    TensorHandle s = ag.value_add(a, b);
 
     ASSERT_FLOAT_EQ(8.0f, ag.get(s).tensor.values()[0], "3 + 5 == 8");
     ASSERT_INT_EQ(2, ag.get(s).children.size(), "add has 2 children");
@@ -77,9 +77,9 @@ static void test_add(AutoGrad<DataType> &ag)
 static void test_sub(AutoGrad<DataType> &ag)
 {
     printf("test_sub ... ");
-    NodeHandle a = ag.value_leaf(10.0f);
-    NodeHandle b = ag.value_leaf(4.0f);
-    NodeHandle d = ag.value_sub(a, b);
+    TensorHandle a = ag.value_leaf(10.0f);
+    TensorHandle b = ag.value_leaf(4.0f);
+    TensorHandle d = ag.value_sub(a, b);
 
     ASSERT_FLOAT_EQ(6.0f, ag.get(d).tensor.values()[0], "10 - 4 == 6");
 
@@ -93,9 +93,9 @@ static void test_sub(AutoGrad<DataType> &ag)
 static void test_mul(AutoGrad<DataType> &ag)
 {
     printf("test_mul ... ");
-    NodeHandle a = ag.value_leaf(3.0f);
-    NodeHandle b = ag.value_leaf(7.0f);
-    NodeHandle p = ag.value_mul(a, b);
+    TensorHandle a = ag.value_leaf(3.0f);
+    TensorHandle b = ag.value_leaf(7.0f);
+    TensorHandle p = ag.value_mul(a, b);
 
     ASSERT_FLOAT_EQ(21.0f, ag.get(p).tensor.values()[0], "3 * 7 == 21");
 
@@ -109,9 +109,9 @@ static void test_mul(AutoGrad<DataType> &ag)
 static void test_div(AutoGrad<DataType> &ag)
 {
     printf("test_div ... ");
-    NodeHandle a = ag.value_leaf(10.0f);
-    NodeHandle b = ag.value_leaf(4.0f);
-    NodeHandle q = ag.value_div(a, b);
+    TensorHandle a = ag.value_leaf(10.0f);
+    TensorHandle b = ag.value_leaf(4.0f);
+    TensorHandle q = ag.value_div(a, b);
 
     ASSERT_FLOAT_EQ(2.5f, ag.get(q).tensor.values()[0], "10 / 4 == 2.5");
 
@@ -125,8 +125,8 @@ static void test_div(AutoGrad<DataType> &ag)
 static void test_pow(AutoGrad<DataType> &ag)
 {
     printf("test_pow ... ");
-    NodeHandle a = ag.value_leaf(2.0f);
-    NodeHandle r = ag.value_pow(a, 3.0f);
+    TensorHandle a = ag.value_leaf(2.0f);
+    TensorHandle r = ag.value_pow(a, 3.0f);
 
     ASSERT_FLOAT_EQ(8.0f, ag.get(r).tensor.values()[0], "2^3 == 8");
 
@@ -139,8 +139,8 @@ static void test_pow_noninteger(AutoGrad<DataType> &ag)
 {
     printf("test_pow_noninteger ... ");
     // 3^2.5 = 15.588457, d(x^2.5)/dx = 2.5 * 3^1.5 = 12.990380
-    NodeHandle a = ag.value_leaf(3.0f);
-    NodeHandle r = ag.value_pow(a, 2.5f);
+    TensorHandle a = ag.value_leaf(3.0f);
+    TensorHandle r = ag.value_pow(a, 2.5f);
 
     ASSERT_FLOAT_EQ(15.588457f, ag.get(r).tensor.values()[0], "3^2.5");
 
@@ -153,8 +153,8 @@ static void test_pow_noninteger(AutoGrad<DataType> &ag)
 static void test_log(AutoGrad<DataType> &ag)
 {
     printf("test_log ... ");
-    NodeHandle a = ag.value_leaf(std::exp(1.0f));  // e
-    NodeHandle r = ag.value_log(a);
+    TensorHandle a = ag.value_leaf(std::exp(1.0f));  // e
+    TensorHandle r = ag.value_log(a);
 
     ASSERT_FLOAT_EQ(1.0f, ag.get(r).tensor.values()[0], "log(e) == 1");
 
@@ -167,8 +167,8 @@ static void test_log(AutoGrad<DataType> &ag)
 static void test_exp(AutoGrad<DataType> &ag)
 {
     printf("test_exp ... ");
-    NodeHandle a = ag.value_leaf(2.0f);
-    NodeHandle r = ag.value_exp(a);
+    TensorHandle a = ag.value_leaf(2.0f);
+    TensorHandle r = ag.value_exp(a);
 
     float exp2 = std::exp(2.0f);
     ASSERT_FLOAT_EQ(exp2, ag.get(r).tensor.values()[0], "exp(2)");
@@ -182,8 +182,8 @@ static void test_exp(AutoGrad<DataType> &ag)
 static void test_add_const(AutoGrad<DataType> &ag)
 {
     printf("test_add_const ... ");
-    NodeHandle a = ag.value_leaf(3.0f);
-    NodeHandle r = ag.value_add_const(a, 5.0f);
+    TensorHandle a = ag.value_leaf(3.0f);
+    TensorHandle r = ag.value_add_const(a, 5.0f);
 
     ASSERT_FLOAT_EQ(8.0f, ag.get(r).tensor.values()[0], "3 + 5 == 8");
 
@@ -196,8 +196,8 @@ static void test_add_const(AutoGrad<DataType> &ag)
 static void test_mul_const(AutoGrad<DataType> &ag)
 {
     printf("test_mul_const ... ");
-    NodeHandle a = ag.value_leaf(4.0f);
-    NodeHandle r = ag.value_mul_const(a, 3.0f);
+    TensorHandle a = ag.value_leaf(4.0f);
+    TensorHandle r = ag.value_mul_const(a, 3.0f);
 
     ASSERT_FLOAT_EQ(12.0f, ag.get(r).tensor.values()[0], "4 * 3 == 12");
 
@@ -210,8 +210,8 @@ static void test_mul_const(AutoGrad<DataType> &ag)
 static void test_sub_const(AutoGrad<DataType> &ag)
 {
     printf("test_sub_const ... ");
-    NodeHandle a = ag.value_leaf(10.0f);
-    NodeHandle r = ag.value_sub_const(a, 4.0f);
+    TensorHandle a = ag.value_leaf(10.0f);
+    TensorHandle r = ag.value_sub_const(a, 4.0f);
 
     ASSERT_FLOAT_EQ(6.0f, ag.get(r).tensor.values()[0], "10 - 4 == 6");
 
@@ -224,8 +224,8 @@ static void test_sub_const(AutoGrad<DataType> &ag)
 static void test_div_const(AutoGrad<DataType> &ag)
 {
     printf("test_div_const ... ");
-    NodeHandle a = ag.value_leaf(10.0f);
-    NodeHandle r = ag.value_div_const(a, 4.0f);
+    TensorHandle a = ag.value_leaf(10.0f);
+    TensorHandle r = ag.value_div_const(a, 4.0f);
 
     ASSERT_FLOAT_EQ(2.5f, ag.get(r).tensor.values()[0], "10 / 4 == 2.5");
 
@@ -238,8 +238,8 @@ static void test_div_const(AutoGrad<DataType> &ag)
 static void test_tile_scalar(AutoGrad<DataType> &ag)
 {
     printf("test_tile_scalar ... ");
-    NodeHandle s = ag.value_leaf(7.0f);
-    NodeHandle t = ag.value_tile_scalar(s, 4);
+    TensorHandle s = ag.value_leaf(7.0f);
+    TensorHandle t = ag.value_tile_scalar(s, 4);
 
     ASSERT_INT_EQ(4, ag.get(t).tensor.numel(), "tiled to 4 elements");
     for (int i = 0; i < 4; i++)
@@ -254,9 +254,9 @@ static void test_tile_scalar(AutoGrad<DataType> &ag)
 static void test_mul_scalar(AutoGrad<DataType> &ag)
 {
     printf("test_mul_scalar ... ");
-    NodeHandle input = ag.value_leaf(6.0f);
-    NodeHandle scalar = ag.value_leaf(3.0f);
-    NodeHandle r = ag.value_mul_scalar(input, scalar);
+    TensorHandle input = ag.value_leaf(6.0f);
+    TensorHandle scalar = ag.value_leaf(3.0f);
+    TensorHandle r = ag.value_mul_scalar(input, scalar);
 
     ASSERT_FLOAT_EQ(18.0f, ag.get(r).tensor.values()[0], "6 * 3 == 18");
 
@@ -270,9 +270,9 @@ static void test_mul_scalar(AutoGrad<DataType> &ag)
 static void test_div_scalar(AutoGrad<DataType> &ag)
 {
     printf("test_div_scalar ... ");
-    NodeHandle input = ag.value_leaf(12.0f);
-    NodeHandle scalar = ag.value_leaf(4.0f);
-    NodeHandle r = ag.value_div_scalar(input, scalar);
+    TensorHandle input = ag.value_leaf(12.0f);
+    TensorHandle scalar = ag.value_leaf(4.0f);
+    TensorHandle r = ag.value_div_scalar(input, scalar);
 
     ASSERT_FLOAT_EQ(3.0f, ag.get(r).tensor.values()[0], "12 / 4 == 3");
 
@@ -286,8 +286,8 @@ static void test_div_scalar(AutoGrad<DataType> &ag)
 static void test_relu_positive(AutoGrad<DataType> &ag)
 {
     printf("test_relu_positive ... ");
-    NodeHandle a = ag.value_leaf(3.0f);
-    NodeHandle r = ag.value_relu(a);
+    TensorHandle a = ag.value_leaf(3.0f);
+    TensorHandle r = ag.value_relu(a);
 
     ASSERT_FLOAT_EQ(3.0f, ag.get(r).tensor.values()[0], "relu(3) == 3");
 
@@ -300,8 +300,8 @@ static void test_relu_positive(AutoGrad<DataType> &ag)
 static void test_erf(AutoGrad<DataType> &ag)
 {
     printf("test_erf ... ");
-    NodeHandle a = ag.value_leaf(0.0f);
-    NodeHandle r = ag.value_erf(a);
+    TensorHandle a = ag.value_leaf(0.0f);
+    TensorHandle r = ag.value_erf(a);
 
     ASSERT_FLOAT_EQ(0.0f, ag.get(r).tensor.values()[0], "erf(0) == 0");
 
@@ -315,8 +315,8 @@ static void test_erf_nonzero(AutoGrad<DataType> &ag)
 {
     printf("test_erf_nonzero ... ");
     // erf(1) = 0.842701, d(erf)/dx at 1 = 2/sqrt(pi) * exp(-1) = 0.415108
-    NodeHandle a = ag.value_leaf(1.0f);
-    NodeHandle r = ag.value_erf(a);
+    TensorHandle a = ag.value_leaf(1.0f);
+    TensorHandle r = ag.value_erf(a);
 
     ASSERT_FLOAT_EQ(0.842701f, ag.get(r).tensor.values()[0], "erf(1)");
 
@@ -329,8 +329,8 @@ static void test_erf_nonzero(AutoGrad<DataType> &ag)
 static void test_gelu(AutoGrad<DataType> &ag)
 {
     printf("test_gelu ... ");
-    NodeHandle a = ag.value_leaf(0.0f);
-    NodeHandle r = ag.value_gelu(a);
+    TensorHandle a = ag.value_leaf(0.0f);
+    TensorHandle r = ag.value_gelu(a);
 
     ASSERT_FLOAT_EQ(0.0f, ag.get(r).tensor.values()[0], "gelu(0) == 0");
 
@@ -344,8 +344,8 @@ static void test_gelu_nonzero(AutoGrad<DataType> &ag)
 {
     printf("test_gelu_nonzero ... ");
     // gelu(1) = 0.841345, d(gelu)/dx at 1 = 1.083315
-    NodeHandle a = ag.value_leaf(1.0f);
-    NodeHandle r = ag.value_gelu(a);
+    TensorHandle a = ag.value_leaf(1.0f);
+    TensorHandle r = ag.value_gelu(a);
 
     ASSERT_FLOAT_EQ(0.841345f, ag.get(r).tensor.values()[0], "gelu(1)");
 
@@ -358,8 +358,8 @@ static void test_gelu_negative(AutoGrad<DataType> &ag)
 {
     printf("test_gelu_negative ... ");
     // gelu(-1) = -0.158655, d(gelu)/dx at -1 = -0.083315
-    NodeHandle a = ag.value_leaf(-1.0f);
-    NodeHandle r = ag.value_gelu(a);
+    TensorHandle a = ag.value_leaf(-1.0f);
+    TensorHandle r = ag.value_gelu(a);
 
     ASSERT_FLOAT_EQ(-0.158655f, ag.get(r).tensor.values()[0], "gelu(-1)");
 
@@ -371,8 +371,8 @@ static void test_gelu_negative(AutoGrad<DataType> &ag)
 static void test_relu_negative(AutoGrad<DataType> &ag)
 {
     printf("test_relu_negative ... ");
-    NodeHandle a = ag.value_leaf(-2.0f);
-    NodeHandle r = ag.value_relu(a);
+    TensorHandle a = ag.value_leaf(-2.0f);
+    TensorHandle r = ag.value_relu(a);
 
     ASSERT_FLOAT_EQ(0.0f, ag.get(r).tensor.values()[0], "relu(-2) == 0");
 
@@ -386,11 +386,11 @@ static void test_select_row(AutoGrad<DataType> &ag)
 {
     printf("test_select_row ... ");
     // Create a 2x3 matrix: {{1,2,3},{4,5,6}}
-    NodeHandle m = ag.tensor_leaf({2, 3});
+    TensorHandle m = ag.tensor_leaf({2, 3});
     DataType *mv = ag.get(m).tensor.values().data();
     mv[0]=1; mv[1]=2; mv[2]=3; mv[3]=4; mv[4]=5; mv[5]=6;
 
-    NodeHandle r = ag.value_select_row(m, 1);  // select row 1 -> {4,5,6}
+    TensorHandle r = ag.value_select_row(m, 1);  // select row 1 -> {4,5,6}
     ASSERT_FLOAT_EQ(4.0f, ag.get(r).tensor.values()[0], "row1[0] == 4");
     ASSERT_FLOAT_EQ(5.0f, ag.get(r).tensor.values()[1], "row1[1] == 5");
     ASSERT_FLOAT_EQ(6.0f, ag.get(r).tensor.values()[2], "row1[2] == 6");
@@ -408,12 +408,12 @@ static void test_slice_cols(AutoGrad<DataType> &ag)
 {
     printf("test_slice_cols ... ");
     // Create a 2x4 matrix: {{1,2,3,4},{5,6,7,8}}
-    NodeHandle m = ag.tensor_leaf({2, 4});
+    TensorHandle m = ag.tensor_leaf({2, 4});
     DataType *mv = ag.get(m).tensor.values().data();
     mv[0]=1; mv[1]=2; mv[2]=3; mv[3]=4;
     mv[4]=5; mv[5]=6; mv[6]=7; mv[7]=8;
 
-    NodeHandle s = ag.value_slice_cols(m, 1, 2);  // cols [1..2] -> {{2,3},{6,7}}
+    TensorHandle s = ag.value_slice_cols(m, 1, 2);  // cols [1..2] -> {{2,3},{6,7}}
     ASSERT_FLOAT_EQ(2.0f, ag.get(s).tensor.values()[0], "s[0,0] == 2");
     ASSERT_FLOAT_EQ(3.0f, ag.get(s).tensor.values()[1], "s[0,1] == 3");
     ASSERT_FLOAT_EQ(6.0f, ag.get(s).tensor.values()[2], "s[1,0] == 6");
@@ -435,11 +435,11 @@ static void test_slice_cols(AutoGrad<DataType> &ag)
 static void test_select_element(AutoGrad<DataType> &ag)
 {
     printf("test_select_element ... ");
-    NodeHandle a = ag.tensor_leaf({3});
+    TensorHandle a = ag.tensor_leaf({3});
     DataType *av = ag.get(a).tensor.values().data();
     av[0] = 10; av[1] = 20; av[2] = 30;
 
-    NodeHandle e = ag.value_select_element(a, 2);  // select element at index 2
+    TensorHandle e = ag.value_select_element(a, 2);  // select element at index 2
     ASSERT_FLOAT_EQ(30.0f, ag.get(e).tensor.values()[0], "element[2] == 30");
 
     ag.backward(e);
@@ -454,13 +454,13 @@ static void test_scatter_row(AutoGrad<DataType> &ag)
 {
     printf("test_scatter_row ... ");
     // dst: 3x2 matrix {{1,1},{1,1},{1,1}}
-    NodeHandle dst = ag.tensor_leaf({3, 2}, 1.0f);
+    TensorHandle dst = ag.tensor_leaf({3, 2}, 1.0f);
     // src: {10,20}
-    NodeHandle src = ag.tensor_leaf({2});
+    TensorHandle src = ag.tensor_leaf({2});
     DataType *sv = ag.get(src).tensor.values().data();
     sv[0] = 10; sv[1] = 20;
 
-    NodeHandle out = ag.value_scatter_row(dst, src, 1);  // scatter src into row 1
+    TensorHandle out = ag.value_scatter_row(dst, src, 1);  // scatter src into row 1
     ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[0], "row 0 unchanged");
     ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[1], "row 0 unchanged");
     ASSERT_FLOAT_EQ(10.0f, ag.get(out).tensor.values()[2], "row 1 overwritten");
@@ -485,13 +485,13 @@ static void test_scatter_cols(AutoGrad<DataType> &ag)
 {
     printf("test_scatter_cols ... ");
     // dst: 2x4 matrix {{1,1,1,1},{1,1,1,1}}
-    NodeHandle dst = ag.tensor_leaf({2, 4}, 1.0f);
+    TensorHandle dst = ag.tensor_leaf({2, 4}, 1.0f);
     // src: 2x2 matrix {{10,20},{30,40}}
-    NodeHandle src = ag.tensor_leaf({2, 2});
+    TensorHandle src = ag.tensor_leaf({2, 2});
     DataType *sv = ag.get(src).tensor.values().data();
     sv[0] = 10; sv[1] = 20; sv[2] = 30; sv[3] = 40;
 
-    NodeHandle out = ag.value_scatter_cols(dst, src, 1);  // scatter src into cols 1-2
+    TensorHandle out = ag.value_scatter_cols(dst, src, 1);  // scatter src into cols 1-2
     // Row 0: {1, 10, 20, 1}
     ASSERT_FLOAT_EQ(1.0f, ag.get(out).tensor.values()[0], "row 0 col 0 unchanged");
     ASSERT_FLOAT_EQ(10.0f, ag.get(out).tensor.values()[1], "row 0 col 1 overwritten");
@@ -525,15 +525,15 @@ static void test_matmul(AutoGrad<DataType> &ag)
 {
     printf("test_matmul ... ");
     // A: 2x2 {{1,2},{3,4}}, B: 2x2 {{5,6},{7,8}}
-    NodeHandle a = ag.tensor_leaf({2, 2});
+    TensorHandle a = ag.tensor_leaf({2, 2});
     DataType *av = ag.get(a).tensor.values().data();
     av[0]=1; av[1]=2; av[2]=3; av[3]=4;
 
-    NodeHandle b = ag.tensor_leaf({2, 2});
+    TensorHandle b = ag.tensor_leaf({2, 2});
     DataType *bv = ag.get(b).tensor.values().data();
     bv[0]=5; bv[1]=6; bv[2]=7; bv[3]=8;
 
-    NodeHandle c = ag.value_matmul(a, b);
+    TensorHandle c = ag.value_matmul(a, b);
     ASSERT_FLOAT_EQ(19.0f, ag.get(c).tensor.values()[0], "C[0,0] == 1*5+2*7");
     ASSERT_FLOAT_EQ(22.0f, ag.get(c).tensor.values()[1], "C[0,1] == 1*6+2*8");
     ASSERT_FLOAT_EQ(43.0f, ag.get(c).tensor.values()[2], "C[1,0] == 3*5+4*7");
@@ -559,15 +559,15 @@ static void test_matmul_bt(AutoGrad<DataType> &ag)
     printf("test_matmul_bt ... ");
     // A: 2x2 {{1,2},{3,4}}, B: 2x2 {{5,6},{7,8}}  (N=2, K=2)
     // C[m,n] = sum_k A[m,k]*B[n,k]
-    NodeHandle a = ag.tensor_leaf({2, 2});
+    TensorHandle a = ag.tensor_leaf({2, 2});
     DataType *av = ag.get(a).tensor.values().data();
     av[0]=1; av[1]=2; av[2]=3; av[3]=4;
 
-    NodeHandle b = ag.tensor_leaf({2, 2});
+    TensorHandle b = ag.tensor_leaf({2, 2});
     DataType *bv = ag.get(b).tensor.values().data();
     bv[0]=5; bv[1]=6; bv[2]=7; bv[3]=8;
 
-    NodeHandle c = ag.value_matmul_bt(a, b);
+    TensorHandle c = ag.value_matmul_bt(a, b);
     ASSERT_FLOAT_EQ(17.0f, ag.get(c).tensor.values()[0], "C[0,0] == 1*5+2*7");
     ASSERT_FLOAT_EQ(23.0f, ag.get(c).tensor.values()[1], "C[0,1] == 1*6+2*8");
     ASSERT_FLOAT_EQ(39.0f, ag.get(c).tensor.values()[2], "C[1,0] == 3*5+4*7");
@@ -592,12 +592,12 @@ static void test_softmax_rows(AutoGrad<DataType> &ag)
 {
     printf("test_softmax_rows ... ");
     // 2x3 matrix: {{1,2,3},{0,0,0}}
-    NodeHandle m = ag.tensor_leaf({2, 3});
+    TensorHandle m = ag.tensor_leaf({2, 3});
     DataType *mv = ag.get(m).tensor.values().data();
     mv[0]=1; mv[1]=2; mv[2]=3;
     mv[3]=0; mv[4]=0; mv[5]=0;
 
-    NodeHandle s = ag.value_softmax_rows(m);
+    TensorHandle s = ag.value_softmax_rows(m);
 
     // Row 1: softmax(0,0,0) = {1/3, 1/3, 1/3}
     ASSERT_FLOAT_EQ(0.333333f, ag.get(s).tensor.values()[3], "softmax row 1, col 0");
@@ -615,11 +615,11 @@ static void test_softmax_rows(AutoGrad<DataType> &ag)
 static void test_max(AutoGrad<DataType> &ag)
 {
     printf("test_max ... ");
-    NodeHandle a = ag.tensor_leaf({4});
+    TensorHandle a = ag.tensor_leaf({4});
     DataType *av = ag.get(a).tensor.values().data();
     av[0] = 3; av[1] = 7; av[2] = 1; av[3] = 5;
 
-    NodeHandle mx = ag.value_max(a);
+    TensorHandle mx = ag.value_max(a);
     ASSERT_FLOAT_EQ(7.0f, ag.get(mx).tensor.values()[0], "max == 7");
 
     ag.backward(mx);
@@ -634,11 +634,11 @@ static void test_max(AutoGrad<DataType> &ag)
 static void test_sum(AutoGrad<DataType> &ag)
 {
     printf("test_sum ... ");
-    NodeHandle a = ag.tensor_leaf({3});
+    TensorHandle a = ag.tensor_leaf({3});
     DataType *av = ag.get(a).tensor.values().data();
     av[0] = 1; av[1] = 2; av[2] = 3;
 
-    NodeHandle s = ag.value_sum(a);
+    TensorHandle s = ag.value_sum(a);
     ASSERT_FLOAT_EQ(6.0f, ag.get(s).tensor.values()[0], "sum == 6");
 
     ag.backward(s);
@@ -653,12 +653,12 @@ static void test_sum_rows(AutoGrad<DataType> &ag)
 {
     printf("test_sum_rows ... ");
     // 2x3 matrix: {{1,2,3},{4,5,6}}
-    NodeHandle m = ag.tensor_leaf({2, 3});
+    TensorHandle m = ag.tensor_leaf({2, 3});
     DataType *mv = ag.get(m).tensor.values().data();
     mv[0]=1; mv[1]=2; mv[2]=3;
     mv[3]=4; mv[4]=5; mv[5]=6;
 
-    NodeHandle s = ag.value_sum_rows(m);
+    TensorHandle s = ag.value_sum_rows(m);
     ASSERT_FLOAT_EQ(6.0f, ag.get(s).tensor.values()[0], "row 0 sum == 6");
     ASSERT_FLOAT_EQ(15.0f, ag.get(s).tensor.values()[1], "row 1 sum == 15");
 
@@ -678,15 +678,15 @@ static void test_scale_rows(AutoGrad<DataType> &ag)
 {
     printf("test_scale_rows ... ");
     // A: 2x2 {{1,2},{3,4}}, v: {2, 3}
-    NodeHandle a = ag.tensor_leaf({2, 2});
+    TensorHandle a = ag.tensor_leaf({2, 2});
     DataType *av = ag.get(a).tensor.values().data();
     av[0]=1; av[1]=2; av[2]=3; av[3]=4;
 
-    NodeHandle v = ag.tensor_leaf({2});
+    TensorHandle v = ag.tensor_leaf({2});
     DataType *vv = ag.get(v).tensor.values().data();
     vv[0]=2; vv[1]=3;
 
-    NodeHandle out = ag.value_scale_rows(a, v);
+    TensorHandle out = ag.value_scale_rows(a, v);
     ASSERT_FLOAT_EQ(2.0f, ag.get(out).tensor.values()[0], "out[0,0] == 1*2");
     ASSERT_FLOAT_EQ(4.0f, ag.get(out).tensor.values()[1], "out[0,1] == 2*2");
     ASSERT_FLOAT_EQ(9.0f, ag.get(out).tensor.values()[2], "out[1,0] == 3*3");
@@ -705,15 +705,15 @@ static void test_mul_rows(AutoGrad<DataType> &ag)
 {
     printf("test_mul_rows ... ");
     // A: 2x2 {{1,2},{3,4}}, b: {5,6}
-    NodeHandle a = ag.tensor_leaf({2, 2});
+    TensorHandle a = ag.tensor_leaf({2, 2});
     DataType *av = ag.get(a).tensor.values().data();
     av[0]=1; av[1]=2; av[2]=3; av[3]=4;
 
-    NodeHandle b = ag.tensor_leaf({2});
+    TensorHandle b = ag.tensor_leaf({2});
     DataType *bv = ag.get(b).tensor.values().data();
     bv[0]=5; bv[1]=6;
 
-    NodeHandle out = ag.value_mul_rows(a, b);
+    TensorHandle out = ag.value_mul_rows(a, b);
     ASSERT_FLOAT_EQ(5.0f, ag.get(out).tensor.values()[0], "out[0,0] == 1*5");
     ASSERT_FLOAT_EQ(12.0f, ag.get(out).tensor.values()[1], "out[0,1] == 2*6");
     ASSERT_FLOAT_EQ(15.0f, ag.get(out).tensor.values()[2], "out[1,0] == 3*5");
@@ -732,15 +732,15 @@ static void test_add_rows(AutoGrad<DataType> &ag)
 {
     printf("test_add_rows ... ");
     // A: 2x2 {{1,2},{3,4}}, b: {10,20}
-    NodeHandle a = ag.tensor_leaf({2, 2});
+    TensorHandle a = ag.tensor_leaf({2, 2});
     DataType *av = ag.get(a).tensor.values().data();
     av[0]=1; av[1]=2; av[2]=3; av[3]=4;
 
-    NodeHandle b = ag.tensor_leaf({2});
+    TensorHandle b = ag.tensor_leaf({2});
     DataType *bv = ag.get(b).tensor.values().data();
     bv[0]=10; bv[1]=20;
 
-    NodeHandle out = ag.value_add_rows(a, b);
+    TensorHandle out = ag.value_add_rows(a, b);
     ASSERT_FLOAT_EQ(11.0f, ag.get(out).tensor.values()[0], "out[0,0] == 1+10");
     ASSERT_FLOAT_EQ(22.0f, ag.get(out).tensor.values()[1], "out[0,1] == 2+20");
     ASSERT_FLOAT_EQ(13.0f, ag.get(out).tensor.values()[2], "out[1,0] == 3+10");
@@ -762,7 +762,7 @@ static void test_add_rows(AutoGrad<DataType> &ag)
 static void test_tensor_leaf(AutoGrad<DataType> &ag)
 {
     printf("test_tensor_leaf ... ");
-    NodeHandle t = ag.tensor_leaf({2, 3}, 5.0f);
+    TensorHandle t = ag.tensor_leaf({2, 3}, 5.0f);
 
     ASSERT_INT_EQ(6, ag.get(t).tensor.numel(), "tensor has 6 elements");
     for (int i = 0; i < 6; i++)
@@ -777,10 +777,10 @@ static void test_tensor_leaf(AutoGrad<DataType> &ag)
 static void test_chained_computation(AutoGrad<DataType> &ag)
 {
     printf("test_chained_computation ... ");
-    NodeHandle x = ag.value_leaf(4.0f);
-    NodeHandle t1 = ag.value_mul(x, ag.value_leaf(2.0f));   // x * 2
-    NodeHandle t2 = ag.value_add(t1, ag.value_leaf(3.0f));  // x * 2 + 3
-    NodeHandle t3 = ag.value_pow(t2, 2.0f);                 // (x*2+3)^2
+    TensorHandle x = ag.value_leaf(4.0f);
+    TensorHandle t1 = ag.value_mul(x, ag.value_leaf(2.0f));   // x * 2
+    TensorHandle t2 = ag.value_add(t1, ag.value_leaf(3.0f));  // x * 2 + 3
+    TensorHandle t3 = ag.value_pow(t2, 2.0f);                 // (x*2+3)^2
 
     ASSERT_FLOAT_EQ(121.0f, ag.get(t3).tensor.values()[0], "f(4) == 121");
 
@@ -794,8 +794,8 @@ static void test_chained_computation(AutoGrad<DataType> &ag)
 static void test_shared_node(AutoGrad<DataType> &ag)
 {
     printf("test_shared_node ... ");
-    NodeHandle a = ag.value_leaf(5.0f);
-    NodeHandle s = ag.value_add(a, a);
+    TensorHandle a = ag.value_leaf(5.0f);
+    TensorHandle s = ag.value_add(a, a);
 
     ASSERT_FLOAT_EQ(10.0f, ag.get(s).tensor.values()[0], "5 + 5 == 10");
 
@@ -821,7 +821,7 @@ static void test_reset(AutoGrad<DataType> &ag)
 static void test_allocate_matrix(AutoGrad<DataType> &ag)
 {
     printf("test_allocate_matrix ... ");
-    ParameterHandle matrix = ag.allocate_parameter_matrix(2, 3, 0, 0.1f);
+    TensorHandle matrix = ag.allocate_parameter_matrix(2, 3, 0, 0.1f);
 
     // Quick sanity: nodes exist and have data in a reasonable range
     bool ok = true;
@@ -829,7 +829,7 @@ static void test_allocate_matrix(AutoGrad<DataType> &ag)
     {
         for (int col = 0; col < 3; col++)
         {
-            float val = ag.get(matrix.start).tensor(0,0);
+            float val = ag.get(matrix).tensor(0,0);
             if (std::abs(val) > 3.0f) ok = false;  // 3-sigma bound, very unlikely to fail
         }
     }
@@ -860,14 +860,14 @@ static void test_transformer_block(AutoGrad<DataType> &ag)
     block.init(ag, emb_dim, num_heads, ffn_dim, 0.1f);
 
     // Create input {seq_len, emb_dim}
-    NodeHandle input = ag.tensor_leaf({seq_len, emb_dim});
+    TensorHandle input = ag.tensor_leaf({seq_len, emb_dim});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         for (int i = 0; i < seq_len * emb_dim; i++)
             iv[i] = DataType(i % 5 + 1);
     }
 
-    NodeHandle output = block.forward(ag, input);
+    TensorHandle output = block.forward(ag, input);
     {
         const auto &shape = ag.get(output).tensor.get_shape();
         ASSERT_INT_EQ(2, shape.rank(), "output rank == 2");
@@ -912,14 +912,14 @@ static void test_attention_layer(AutoGrad<DataType> &ag)
     layer.init(ag, emb_dim, num_heads);
 
     // Create input {seq_len, emb_dim}
-    NodeHandle input = ag.tensor_leaf({seq_len, emb_dim});
+    TensorHandle input = ag.tensor_leaf({seq_len, emb_dim});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         for (int i = 0; i < seq_len * emb_dim; i++)
             iv[i] = DataType(i % 7 + 1);  // fill with small values
     }
 
-    NodeHandle output = layer.forward(ag, input);
+    TensorHandle output = layer.forward(ag, input);
     {
         const auto &shape = ag.get(output).tensor.get_shape();
         ASSERT_INT_EQ(2, shape.rank(), "output rank == 2");
@@ -947,13 +947,13 @@ static void test_embedding_layer(AutoGrad<DataType> &ag)
     // row 2: {70, 80, 90}
     // row 3: {100, 110, 120}
     {
-        DataType *wv = ag.get(layer.parameters.start).tensor.values().data();
+        DataType *wv = ag.get(layer.parameters).tensor.values().data();
         for (int i = 0; i < 12; i++)
             wv[i] = DataType(10 * (i + 1));
     }
 
     // Lookup token 1 -> {40, 50, 60}
-    NodeHandle output = layer.forward(ag, 1);
+    TensorHandle output = layer.forward(ag, 1);
     ASSERT_INT_EQ(3, ag.get(output).tensor.numel(), "emb_dim == 3");
     ASSERT_FLOAT_EQ(40.0f, ag.get(output).tensor.values()[0], "emb[1][0] == 40");
     ASSERT_FLOAT_EQ(50.0f, ag.get(output).tensor.values()[1], "emb[1][1] == 50");
@@ -962,7 +962,7 @@ static void test_embedding_layer(AutoGrad<DataType> &ag)
     // Backward: grad should only flow to row 1 of the embedding matrix
     ag.backward(output);
     {
-        const auto &gr = ag.get(layer.parameters.start).tensor.gradients();
+        const auto &gr = ag.get(layer.parameters).tensor.gradients();
         // row 0 should be all zeros
         ASSERT_FLOAT_EQ(0.0f, gr[0], "emb grad row 0 == 0");
         ASSERT_FLOAT_EQ(0.0f, gr[1], "emb grad row 0 == 0");
@@ -991,13 +991,13 @@ static void test_softmax_layer(AutoGrad<DataType> &ag)
     // exp(3-max) = exp(0)  = 1.000000
     // sum = 1.503214
     // softmax = {0.090031, 0.244728, 0.665242}
-    NodeHandle input = ag.tensor_leaf({3});
+    TensorHandle input = ag.tensor_leaf({3});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         iv[0] = 1; iv[1] = 2; iv[2] = 3;
     }
 
-    NodeHandle output = layer.forward(ag, input);
+    TensorHandle output = layer.forward(ag, input);
     ASSERT_FLOAT_EQ(0.090031f, ag.get(output).tensor.values()[0], "softmax[0]");
     ASSERT_FLOAT_EQ(0.244728f, ag.get(output).tensor.values()[1], "softmax[1]");
     ASSERT_FLOAT_EQ(0.665242f, ag.get(output).tensor.values()[2], "softmax[2]");
@@ -1025,13 +1025,13 @@ static void test_simple_rmsnorm_layer(AutoGrad<DataType> &ag)
     // mean(x^2) = (9 + 16) / 2 = 12.5
     // scale = 1 / sqrt(12.5 + eps) ≈ 1 / 3.53553 ≈ 0.282843
     // output ≈ {0.848527, 1.131371}
-    NodeHandle input = ag.tensor_leaf({2});
+    TensorHandle input = ag.tensor_leaf({2});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         iv[0] = 3; iv[1] = 4;
     }
 
-    NodeHandle output = layer.forward(ag, input);
+    TensorHandle output = layer.forward(ag, input);
     ASSERT_FLOAT_EQ(0.848527f, ag.get(output).tensor.values()[0], "norm[0]");
     ASSERT_FLOAT_EQ(1.131371f, ag.get(output).tensor.values()[1], "norm[1]");
 
@@ -1055,20 +1055,20 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
 
     // Set gamma = {1, 1}, beta = {0, 0} so it behaves like SimpleRMSNorm
     {
-        DataType *gv = ag.get(layer.gamma.start).tensor.values().data();
+        DataType *gv = ag.get(layer.gamma).tensor.values().data();
         gv[0] = 1; gv[1] = 1;
-        DataType *bv = ag.get(layer.beta.start).tensor.values().data();
+        DataType *bv = ag.get(layer.beta).tensor.values().data();
         bv[0] = 0; bv[1] = 0;
     }
 
     // Input: {3, 4} -> same result as SimpleRMSNorm
-    NodeHandle input = ag.tensor_leaf({2});
+    TensorHandle input = ag.tensor_leaf({2});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         iv[0] = 3; iv[1] = 4;
     }
 
-    NodeHandle output = layer.forward(ag, input);
+    TensorHandle output = layer.forward(ag, input);
     ASSERT_FLOAT_EQ(0.848527f, ag.get(output).tensor.values()[0], "norm[0] with gamma=1,beta=0");
     ASSERT_FLOAT_EQ(1.131371f, ag.get(output).tensor.values()[1], "norm[1] with gamma=1,beta=0");
 
@@ -1079,9 +1079,9 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
     layer.init(ag, 2, "test_rmsnorm2");
 
     {
-        DataType *gv = ag.get(layer.gamma.start).tensor.values().data();
+        DataType *gv = ag.get(layer.gamma).tensor.values().data();
         gv[0] = 2; gv[1] = 0.5f;
-        DataType *bv = ag.get(layer.beta.start).tensor.values().data();
+        DataType *bv = ag.get(layer.beta).tensor.values().data();
         bv[0] = 10; bv[1] = -5;
     }
 
@@ -1100,10 +1100,10 @@ static void test_rmsnorm_layer(AutoGrad<DataType> &ag)
     // dx = [0.2942, -0.2206], dgamma = [0.8485, 1.1314], dbeta = [1, 1]
     ASSERT_FLOAT_EQ(0.2942f, ag.get(input).tensor.gradients()[0], "dx[0]");
     ASSERT_FLOAT_EQ(-0.2206f, ag.get(input).tensor.gradients()[1], "dx[1]");
-    ASSERT_FLOAT_EQ(0.8485f, ag.get(layer.gamma.start).tensor.gradients()[0], "dgamma[0]");
-    ASSERT_FLOAT_EQ(1.1314f, ag.get(layer.gamma.start).tensor.gradients()[1], "dgamma[1]");
-    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta.start).tensor.gradients()[0], "dbeta[0]");
-    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta.start).tensor.gradients()[1], "dbeta[1]");
+    ASSERT_FLOAT_EQ(0.8485f, ag.get(layer.gamma).tensor.gradients()[0], "dgamma[0]");
+    ASSERT_FLOAT_EQ(1.1314f, ag.get(layer.gamma).tensor.gradients()[1], "dgamma[1]");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta).tensor.gradients()[0], "dbeta[0]");
+    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.beta).tensor.gradients()[1], "dbeta[1]");
 
     printf("\n");
 }
@@ -1121,7 +1121,7 @@ static void test_linear_layer(AutoGrad<DataType> &ag)
     // Set weights to known values: W = {{1, 2}, {3, 4}, {5, 6}}
     // allocate_parameter_matrix stores in row-major: {3 rows, 2 cols}
     {
-        auto &w = ag.get(layer.parameters.start).tensor;
+        auto &w = ag.get(layer.parameters).tensor;
         DataType *pv = w.values().data();
         pv[0] = 1; pv[1] = 2;  // row 0
         pv[2] = 3; pv[3] = 4;  // row 1
@@ -1129,14 +1129,14 @@ static void test_linear_layer(AutoGrad<DataType> &ag)
     }
 
     // Set input: {2, 3} -> {{1, 0, 0}, {0, 1, 0}}
-    NodeHandle input = ag.tensor_leaf({2, 3});
+    TensorHandle input = ag.tensor_leaf({2, 3});
     {
         DataType *iv = ag.get(input).tensor.values().data();
         iv[0] = 1; iv[1] = 0; iv[2] = 0;  // row 0
         iv[3] = 0; iv[4] = 1; iv[5] = 0;  // row 1
     }
 
-    NodeHandle output = layer.forward(ag, input);
+    TensorHandle output = layer.forward(ag, input);
     {
         const auto &shape = ag.get(output).tensor.get_shape();
         ASSERT_INT_EQ(2, shape.rank(), "output rank == 2");
