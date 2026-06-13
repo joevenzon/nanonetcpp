@@ -813,7 +813,7 @@ static void test_reset(AutoGrad<DataType> &ag)
     ag.value_add(ag.value_leaf(3.0f), ag.value_leaf(4.0f));
 
     ag.reset();
-    ASSERT_INT_EQ(0, (int)ag.allocate_node(TensorShape({1})), "first node after reset is index 0");
+    ASSERT_INT_EQ(0, ag.allocate_node(TensorShape({1})).get_node_index(), "first node after reset is index 0");
     printf("\n");
 }
 
@@ -821,7 +821,7 @@ static void test_reset(AutoGrad<DataType> &ag)
 static void test_allocate_matrix(AutoGrad<DataType> &ag)
 {
     printf("test_allocate_matrix ... ");
-    NodeMatrixHandle matrix = ag.allocate_parameter_matrix(2, 3, 0, 0.1f);
+    ParameterHandle matrix = ag.allocate_parameter_matrix(2, 3, 0, 0.1f);
 
     // Quick sanity: nodes exist and have data in a reasonable range
     bool ok = true;

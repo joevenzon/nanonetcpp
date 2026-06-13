@@ -321,7 +321,7 @@ int main(void)
         NodeHandle log_probs = grad.value_log_softmax_rows(logits);
 
         // Accumulate loss over all positions
-        NodeHandle loss_accumulator = -1;
+        NodeHandle loss_accumulator;
 
         for (int pos = 0; pos < seq_len; pos++)
         {
@@ -330,13 +330,13 @@ int main(void)
             NodeHandle log_prob = grad.value_select_element(log_probs, flat_idx);
             NodeHandle neg_log_prob = grad.value_mul_const(log_prob, -1);
 
-            loss_accumulator = (loss_accumulator < 0)
-                ? neg_log_prob
-                : grad.value_add(loss_accumulator, neg_log_prob);
+            loss_accumulator = loss_accumulator.valid()
+                ? grad.value_add(loss_accumulator, neg_log_prob)
+                : neg_log_prob;
         }
 
         // Average the loss over all positions in the sequence.
-        int loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
+        NodeHandle loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
 
         // Backward pass: compute gradients for all parameters.
         optimizer.zero_grad(checkpoint);

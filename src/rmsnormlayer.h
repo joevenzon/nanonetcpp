@@ -66,8 +66,8 @@ struct SimpleRMSNormLayer
 template <typename DataType>
 struct RMSNormLayer
 {
-    NodeMatrixHandle gamma;
-    NodeMatrixHandle beta;
+    ParameterHandle gamma;
+    ParameterHandle beta;
     DataType epsilon = 1e-5f;
 
     void init(AutoGrad<DataType> & grad, int dim, const char * optional_name_hint = NULL)

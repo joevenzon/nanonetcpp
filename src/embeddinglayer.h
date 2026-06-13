@@ -20,7 +20,7 @@
 template <typename DataType>
 struct EmbeddingLayer
 {
-    NodeMatrixHandle parameters; // weight matrix [num_embeddings x emb_dim]
+    ParameterHandle parameters; // weight matrix [num_embeddings x emb_dim]
 
     void init(AutoGrad<DataType> & grad, int num_embeddings, int emb_dim, DataType std_dev, const char * optional_name_hint = NULL)
     {

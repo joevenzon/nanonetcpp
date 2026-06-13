@@ -11,7 +11,7 @@
 template <typename DataType>
 struct LinearLayer
 {
-    NodeMatrixHandle parameters; // weight matrix W {in_dim, out_dim}
+    ParameterHandle parameters; // weight matrix W {in_dim, out_dim}
 
     void init(AutoGrad<DataType> & grad, int num_rows, int num_cols,
         DataType std_dev, const char * optional_name_hint = nullptr)

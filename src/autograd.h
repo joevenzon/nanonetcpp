@@ -45,9 +45,9 @@ public:
         std::array <int, k_max_backward_scratch_values> backward_scratch_int;
     };
 
-    struct LeafMatrixRecord
+    struct LeafParameterRecord
     {
-        NodeMatrixHandle matrix;
+        ParameterHandle params;
         std::string name;
     };
 
@@ -72,7 +72,7 @@ public:
         nodes.resize(node_capacity);
         values.resize(value_capacity);
         grads.resize(value_capacity);
-        leaf_matrices.clear();
+        leaf_parameters.clear();
     }
 
     Tensor <DataType> allocate_tensor(const TensorShape & shape)
@@ -84,14 +84,14 @@ public:
     // this also allocates the node's corresponding tensor
     NodeHandle allocate_node(const TensorShape & shape)
     {
-        NodeHandle index = nodes.allocate();
-        Node & node = nodes[index];
+        NodeHandle h(static_cast<int>(nodes.allocate()));
+        Node & node = get(h);
 
         node.tensor = allocate_tensor(shape);
         node.children.clear();
         node.backward_fn = nullptr;
 
-        return index; // return the index of the allocation
+        return h; // return the index of the allocation
     }
 
     // =============================================================================
@@ -103,7 +103,7 @@ public:
     NodeHandle tensor_leaf(const TensorShape & shape, DataType fill = DataType(0))
     {
         NodeHandle h = allocate_node(shape);
-        Node & node = nodes[h];
+        Node & node = get(h);
 
         const int n = shape.numel();
         for (int i = 0; i < n; i++) node.tensor.values()[i] = fill;
@@ -125,7 +125,7 @@ public:
     // @param mean        Initial value mean
     // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
-    NodeMatrixHandle allocate_parameter_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
+    ParameterHandle allocate_parameter_matrix(int num_rows, int num_cols, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
         NodeHandle handle = allocate_node(TensorShape({ num_rows, num_cols }));
         Node & node = get(handle);
@@ -138,11 +138,11 @@ public:
                 node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
-        NodeMatrixHandle result(handle, num_rows, num_cols);
-        LeafMatrixRecord record;
-        record.matrix = result;
+        ParameterHandle result(handle, num_rows, num_cols);
+        LeafParameterRecord record;
+        record.params = result;
         if (optional_name_hint) record.name = optional_name_hint;
-        leaf_matrices.push_back(record);
+        leaf_parameters.push_back(record);
         return result;
     }
 
@@ -151,7 +151,7 @@ public:
     // @param mean        Initial value mean
     // @param std_dev     Standard deviation for Gaussian initialization, or zero to simply set the values to mean
     // @return            Pool index of the first element (top-left corner)
-    NodeMatrixHandle allocate_parameter_vector(int num_elems, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
+    ParameterHandle allocate_parameter_vector(int num_elems, DataType mean, DataType std_dev, const char * optional_name_hint = NULL)
     {
         NodeHandle handle = allocate_node(TensorShape({ num_elems }));
         Node & node = get(handle);
@@ -163,11 +163,11 @@ public:
                 node.tensor.values()[k] = rand_gaussian(mean, std_dev);
         }
 
-        NodeMatrixHandle result(handle, num_elems, 1);
-        LeafMatrixRecord record;
-        record.matrix = result;
+        ParameterHandle result(handle, num_elems, 1);
+        LeafParameterRecord record;
+        record.params = result;
         if (optional_name_hint) record.name = optional_name_hint;
-        leaf_matrices.push_back(record);
+        leaf_parameters.push_back(record);
         return result;
     }
 
@@ -201,11 +201,11 @@ public:
         return values.high_water_mark();
     }
 
-    std::span<const LeafMatrixRecord> get_leaf_matrices() const { return std::span<const LeafMatrixRecord>(leaf_matrices); }
+    std::span<const LeafParameterRecord> get_leaf_parameters() const { return std::span<const LeafParameterRecord>(leaf_parameters); }
 
     Node & get(NodeHandle index)
     {
-        return nodes[index];
+        return nodes[index.get_node_index()];
     }
 
     void snapshot_parameters()
@@ -1688,7 +1688,7 @@ private:
     int persistent_node_count{ 0 };
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<DataType> uniform{ 0, 1 };
-    std::vector <LeafMatrixRecord> leaf_matrices;
+    std::vector <LeafParameterRecord> leaf_parameters;
 };
 
 // activation function wrappers
