@@ -79,7 +79,9 @@ public:
     Tensor <DataType> allocate_tensor(const TensorShape & shape)
     {
         size_t num = shape.numel();
-        return Tensor<DataType>(values.allocate(num), grads.allocate(num), shape);
+        Tensor<DataType> tensor(values.allocate(num), grads.allocate(num), shape);
+        std::fill(tensor.gradients().begin(), tensor.gradients().end(), DataType(0));
+        return tensor;
     }
 
     // this also allocates the node's corresponding tensor

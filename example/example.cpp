@@ -280,6 +280,7 @@ int main(void)
     // -----------------------------------------------------------------------
     const int    num_training_steps = 10000;
     const float base_learning_rate = 0.005f;
+    const int    accumulation_steps = 1;
 
     // Buffers for tokens.
     std::array <TensorHandle, vocab_size> logit_nodes;
@@ -289,53 +290,70 @@ int main(void)
 
     for (int step = 0; step < num_training_steps; step++)
     {
-        // Select a document from the training set and tokenize it.
-        // Tokens are surrounded by BOS tokens on both sides.
-        const char * current_doc = g_documents[g_train_indices[step % g_num_train]];
-        int doc_length = (int)std::strlen(current_doc);
+        grad.zero_grad();
 
-        std::array<int, MAX_NUM_TOKENS> token_sequence;
-        int num_tokens = 0;
-        for (int & t : token_sequence)
-            t = g_token_bos;
-        token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
-        for (int i = 0; i < doc_length; i++)
+        float last_train_loss = 0.0f;
+
+        // --- GRADIENT ACCUMULATION LOOP ---
+        for (int acc = 0; acc < accumulation_steps; acc++)
         {
-            token_sequence[num_tokens++] = char_to_token_id(current_doc[i]);
+            int micro_step = step * accumulation_steps + acc;
+
+            // Select a document from the training set and tokenize it.
+            // Tokens are surrounded by BOS tokens on both sides.
+            const char * current_doc = g_documents[g_train_indices[micro_step % g_num_train]];
+            int doc_length = (int)std::strlen(current_doc);
+
+            std::array<int, MAX_NUM_TOKENS> token_sequence;
+            int num_tokens = 0;
+            for (int & t : token_sequence)
+                t = g_token_bos;
+            token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
+            for (int i = 0; i < doc_length; i++)
+            {
+                token_sequence[num_tokens++] = char_to_token_id(current_doc[i]);
+            }
+            token_sequence[num_tokens++] = g_token_bos;  // Trailing BOS token (end of sequence)
+
+            // Number of training positions (we predict the next token, so n = num_tokens - 1).
+            int seq_len = num_tokens - 1;
+            if (seq_len > model.block_size) seq_len = model.block_size;
+
+            // SINGLE whole-sequence forward pass -> logits {seq_len, vocab_size}
+            TensorHandle logits = model.forward(grad,
+                std::span<const int>(token_sequence.data(), seq_len));
+
+            // Row-wise softmax -> probabilities {seq_len, vocab_size}
+            TensorHandle log_probs = grad.value_log_softmax_rows(logits);
+
+            // Accumulate loss over all positions
+            TensorHandle loss_accumulator;
+
+            for (int pos = 0; pos < seq_len; pos++)
+            {
+                int target_token = token_sequence[pos + 1];
+                int flat_idx = pos * vocab_size + target_token;
+                TensorHandle log_prob = grad.value_select_element(log_probs, flat_idx);
+                TensorHandle neg_log_prob = grad.value_mul_const(log_prob, -1);
+
+                loss_accumulator = loss_accumulator.valid()
+                    ? grad.value_add(loss_accumulator, neg_log_prob)
+                    : neg_log_prob;
+            }
+
+            // Average the loss over all positions in the sequence.
+            // Scale loss for accumulation: divide by BOTH seq_len AND accumulation_steps so that
+            // the sum of gradients across micro-steps equals the mean.
+            float scale = 1.0f / ((float)seq_len * (float)accumulation_steps);
+            TensorHandle loss_node = grad.value_mul_const(loss_accumulator, scale);
+
+            // Backward pass: compute gradients for all parameters.
+            bool zero_gradients = false;
+            grad.backward(loss_node, zero_gradients);
+
+            last_train_loss = grad.get(loss_node).tensor.values().data()[0];
         }
-        token_sequence[num_tokens++] = g_token_bos;  // Trailing BOS token (end of sequence)
 
-        // Number of training positions (we predict the next token, so n = num_tokens - 1).
-        int seq_len = num_tokens - 1;
-        if (seq_len > model.block_size) seq_len = model.block_size;
-
-        // SINGLE whole-sequence forward pass -> logits {seq_len, vocab_size}
-        TensorHandle logits = model.forward(grad,
-            std::span<const int>(token_sequence.data(), seq_len));
-
-        // Row-wise softmax -> probabilities {seq_len, vocab_size}
-        TensorHandle log_probs = grad.value_log_softmax_rows(logits);
-
-        // Accumulate loss over all positions
-        TensorHandle loss_accumulator;
-
-        for (int pos = 0; pos < seq_len; pos++)
-        {
-            int target_token = token_sequence[pos + 1];
-            int flat_idx = pos * vocab_size + target_token;
-            TensorHandle log_prob = grad.value_select_element(log_probs, flat_idx);
-            TensorHandle neg_log_prob = grad.value_mul_const(log_prob, -1);
-
-            loss_accumulator = loss_accumulator.valid()
-                ? grad.value_add(loss_accumulator, neg_log_prob)
-                : neg_log_prob;
-        }
-
-        // Average the loss over all positions in the sequence.
-        TensorHandle loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
-
-        // Backward pass: compute gradients for all parameters.
-        grad.backward(loss_node);
 
         // capture current parameter values in the checkpoint
         checkpoint.update(grad, optimizer.step_count);
@@ -350,7 +368,7 @@ int main(void)
 
         // Log training progress and periodically evaluate validation loss.
         float current_val_loss = 0.0f;
-        float train_loss = grad.get(loss_node).tensor.values().data()[0];
+        float train_loss = last_train_loss;
         bool do_print = ((step + 1) % log_interval == 0 || step == num_training_steps - 1);
         bool do_val = ((step + 1) % val_interval == 0 || step == num_training_steps - 1);
 

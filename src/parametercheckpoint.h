@@ -23,7 +23,7 @@ struct ParameterCheckpoint
 	std::vector<DataType> grads;
 
 	// steps so far
-	size_t step_count = 0;
+	uint64_t step_count = 0;
 
 	// TODO: should we add optimizer state here?
 
@@ -77,7 +77,7 @@ struct ParameterCheckpoint
 	///     - Version:          4 bytes  uint32_t (little-endian)
 	///     - DataTypeID:       4 bytes  uint32_t (1 = 32-bit float)
 	///     - ParamCount:       8 bytes  uint64_t (number of parameters)
-	///     - StepCount:        4 bytes  uint64_t
+	///     - StepCount:        8 bytes  uint64_t
 	///     - LeafParamCount:   4 bytes  uint32_t (number of LeafParameterRecord entries)
 	///   Leaf Parameter Records (variable)
 	///     For each record:
@@ -89,8 +89,6 @@ struct ParameterCheckpoint
 	///   Payload (variable)
 	///     - values[]   paramCount * sizeof(DataType)
 	///     - grads[]    paramCount * sizeof(DataType)
-	///     - moment1[]  paramCount * sizeof(DataType)
-	///     - moment2[]  paramCount * sizeof(DataType)
 	bool save(std::ostream &out, std::ostream &err) const
 	{
 		if (values.empty())
