@@ -208,18 +208,17 @@ float compute_validation_loss(
         TensorHandle logits = model.forward(grad,
             std::span<const int>(token_sequence.data(), seq_len));
 
-        // Row-wise softmax -> probabilities {seq_len, vocab_size}
-        TensorHandle probs = grad.value_softmax_rows(logits);
+        // Row-wise softmax -> log probabilities {seq_len, vocab_size}
+        TensorHandle log_probs = grad.value_log_softmax_rows(logits);
 
-        const float * pvals = grad.get(probs).tensor.values().data();
+        const float * log_pvals = grad.get(log_probs).tensor.values().data();
 
         for (int pos = 0; pos < seq_len; pos++)
         {
             int target_token = token_sequence[pos + 1];
             int flat_idx = pos * vocab_size + target_token;
-            float p = pvals[flat_idx];
-            if (p < 1e-7f) p = 1e-7f;
-            total_loss -= std::log(p);
+            float log_p = log_pvals[flat_idx];
+            total_loss -= log_p;
             total_positions++;
         }
     }
