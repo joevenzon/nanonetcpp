@@ -250,252 +250,160 @@ public:
     // ELEMENTWISE OPS (require identical shapes; no broadcasting for brevity)
     // =============================================================================
 
-    static void bwd_add(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        DataType * gb = g.get(out.children[1]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) { ga[i] += go[i]; gb[i] += go[i]; }
+    private:
+        // Elementwise Node Helpers: these factor out common element-wise code for binary,
+        // unary, and unary-plus-constant operations
+
+        template<auto GradA, auto GradB>
+        static void bwd_binary_ew(AutoGrad & g, const Node & out)
+        {
+            const DataType * go = out.tensor.gradients().data();
+            const DataType * pa = g.get(out.children[0]).tensor.values().data();
+            const DataType * pb = g.get(out.children[1]).tensor.values().data();
+            DataType * ga = g.get(out.children[0]).tensor.gradients().data();
+            DataType * gb = g.get(out.children[1]).tensor.gradients().data();
+            const int n = out.tensor.numel();
+            for (int i = 0; i < n; i++) {
+                ga[i] += GradA(go[i], pa[i], pb[i]);
+                gb[i] += GradB(go[i], pa[i], pb[i]);
+            }
+        }
+
+        // Passes (go, in, out) so the lambda can use whichever it needs.
+        // bwd_exp needs the output value; bwd_relu/log/erf need the input value.
+        template<auto GradExpr>
+        static void bwd_unary_ew(AutoGrad & g, const Node & out)
+        {
+            const DataType * go = out.tensor.gradients().data();
+            const DataType * pa = g.get(out.children[0]).tensor.values().data();
+            const DataType * po = out.tensor.values().data();
+            DataType * ga = g.get(out.children[0]).tensor.gradients().data();
+            const int n = out.tensor.numel();
+            for (int i = 0; i < n; i++) ga[i] += GradExpr(go[i], pa[i], po[i]);
+        }
+
+        template<auto GradExpr>
+        static void bwd_unary_const_ew(AutoGrad & g, const Node & out)
+        {
+            const DataType c = out.backward_scratch[0];
+            const DataType * go = out.tensor.gradients().data();
+            const DataType * pa = g.get(out.children[0]).tensor.values().data();
+            DataType * ga = g.get(out.children[0]).tensor.gradients().data();
+            const int n = out.tensor.numel();
+            for (int i = 0; i < n; i++) ga[i] += GradExpr(go[i], pa[i], c);
+        }
+
+        template<auto FwdFn, auto GradA, auto GradB>
+        TensorHandle make_binary_ew(TensorHandle a, TensorHandle b)
+        {
+            const TensorShape & shape = get(a).tensor.get_shape();
+            assert(shape == get(b).tensor.get_shape());
+            TensorHandle h = allocate_node(shape);
+            Node & node = get(h);
+            node.children.push_back(a);
+            node.children.push_back(b);
+            const DataType * pa = get(a).tensor.values().data();
+            const DataType * pb = get(b).tensor.values().data();
+            DataType * po = node.tensor.values().data();
+            const int n = shape.numel();
+            for (int i = 0; i < n; i++) po[i] = FwdFn(pa[i], pb[i]);
+            node.backward_fn = &AutoGrad::bwd_binary_ew<GradA, GradB>;
+            return h;
+        }
+
+        template<auto FwdFn, auto GradExpr>
+        TensorHandle make_unary_ew(TensorHandle a)
+        {
+            const TensorShape & shape = get(a).tensor.get_shape();
+            TensorHandle h = allocate_node(shape);
+            Node & node = get(h);
+            node.children.push_back(a);
+            const DataType * pa = get(a).tensor.values().data();
+            DataType * po = node.tensor.values().data();
+            const int n = shape.numel();
+            for (int i = 0; i < n; i++) po[i] = FwdFn(pa[i]);
+            node.backward_fn = &AutoGrad::bwd_unary_ew<GradExpr>;
+            return h;
+        }
+
+        template<auto FwdFn, auto GradExpr>
+        TensorHandle make_unary_const_ew(TensorHandle a, DataType c)
+        {
+            const TensorShape & shape = get(a).tensor.get_shape();
+            TensorHandle h = allocate_node(shape);
+            Node & node = get(h);
+            node.children.push_back(a);
+            node.backward_scratch[0] = c;
+            const DataType * pa = get(a).tensor.values().data();
+            DataType * po = node.tensor.values().data();
+            const int n = shape.numel();
+            for (int i = 0; i < n; i++) po[i] = FwdFn(pa[i], c);
+            node.backward_fn = &AutoGrad::bwd_unary_const_ew<GradExpr>;
+            return h;
+        }
+
+public:
+
+    TensorHandle value_add(TensorHandle a, TensorHandle b) {
+        constexpr auto fwd = [](auto x, auto y) { return x + y; };
+        constexpr auto gA = [](auto go, auto, auto) { return go; };
+        constexpr auto gB = [](auto go, auto, auto) { return go; };
+        return make_binary_ew<fwd, gA, gB>(a, b);
     }
 
-    TensorHandle value_add(TensorHandle a, TensorHandle b)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-        assert(shape == get(b).tensor.get_shape());
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-        node.children.push_back(b);
-
-        const DataType * pa = get(a).tensor.values().data();
-        const DataType * pb = get(b).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) { po[i] = pa[i] + pb[i]; }
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_add;
-
-        return h;
-    }
-
-    static void bwd_sub(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        DataType * gb = g.get(out.children[1]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) { ga[i] += go[i]; gb[i] -= go[i]; }
-    }
-
-    TensorHandle value_sub(TensorHandle a, TensorHandle b)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-        assert(shape == get(b).tensor.get_shape());
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-        node.children.push_back(b);
-
-        const DataType * pa = get(a).tensor.values().data();
-        const DataType * pb = get(b).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) { po[i] = pa[i] - pb[i]; }
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_sub;
-
-        return h;
+    TensorHandle value_sub(TensorHandle a, TensorHandle b) {
+        constexpr auto fwd = [](auto x, auto y) { return x - y; };
+        constexpr auto gA = [](auto go, auto, auto) { return go; };
+        constexpr auto gB = [](auto go, auto, auto) { return -go; };
+        return make_binary_ew<fwd, gA, gB>(a, b);
     }
 
     // Elementwise (Hadamard) multiply.
-    static void bwd_mul(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        const DataType * pb = g.get(out.children[1]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        DataType * gb = g.get(out.children[1]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) { ga[i] += go[i] * pb[i]; gb[i] += go[i] * pa[i]; }
+    TensorHandle value_mul(TensorHandle a, TensorHandle b) {
+        constexpr auto fwd = [](auto x, auto y) { return x * y; };
+        constexpr auto gA = [](auto go, auto, auto b) { return go * b; };
+        constexpr auto gB = [](auto go, auto a, auto) { return go * a; };
+        return make_binary_ew<fwd, gA, gB>(a, b);
     }
 
-    TensorHandle value_mul(TensorHandle a, TensorHandle b)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-        assert(shape == get(b).tensor.get_shape());
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-        node.children.push_back(b);
-
-        const DataType * pa = get(a).tensor.values().data();
-        const DataType * pb = get(b).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) { po[i] = pa[i] * pb[i]; }
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_mul;
-
-        return h;
-    }
-
-    static void bwd_div(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        const DataType * pb = g.get(out.children[1]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        DataType * gb = g.get(out.children[1]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) {
-            const DataType inv = DataType(1) / pb[i];
-            ga[i] += go[i] * inv;
-            gb[i] += go[i] * (-pa[i] * inv * inv);
-        }
-    }
-
-    TensorHandle value_div(TensorHandle a, TensorHandle b)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-        assert(shape == get(b).tensor.get_shape());
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-        node.children.push_back(b);
-
-        const DataType * pa = get(a).tensor.values().data();
-        const DataType * pb = get(b).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) { po[i] = pa[i] / pb[i]; }
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_div;
-
-        return h;
+    TensorHandle value_div(TensorHandle a, TensorHandle b) {
+        constexpr auto fwd = [](auto x, auto y) { return x / y; };
+        constexpr auto gA = [](auto go, auto, auto b) { return go / b; };
+        constexpr auto gB = [](auto go, auto a, auto b) { return go * (-a / (b * b)); };
+        return make_binary_ew<fwd, gA, gB>(a, b);
     }
 
     // =============================================================================
     // SCALAR-CONSTANT OPS
     // =============================================================================
 
-    static void bwd_add_const(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i];
+    TensorHandle value_add_const(TensorHandle a, DataType c) {
+        constexpr auto fwd = [](auto x, auto k) { return x + k; };
+        constexpr auto g = [](auto go, auto, auto) { return go; };
+        return make_unary_const_ew<fwd, g>(a, c);
     }
 
-    TensorHandle value_add_const(TensorHandle a, DataType c)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = pa[i] + c;
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_add_const;
-
-        return h;
+    TensorHandle value_sub_const(TensorHandle a, DataType c) {
+        constexpr auto fwd = [](auto x, auto k) { return x - k; };
+        constexpr auto g = [](auto go, auto, auto) { return go; };
+        return make_unary_const_ew<fwd, g>(a, c);
     }
 
-    static void bwd_mul_const(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType c = out.backward_scratch[0];
-        const DataType * go = out.tensor.gradients().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * c;
+    TensorHandle value_mul_const(TensorHandle a, DataType c) {
+        constexpr auto fwd = [](auto x, auto k) { return x * k; };
+        constexpr auto g = [](auto go, auto, auto k) { return go * k; };
+        return make_unary_const_ew<fwd, g>(a, c);
     }
 
-    TensorHandle value_mul_const(TensorHandle a, DataType c)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        // Store constant in scratch for the backward pass
-        node.backward_scratch[0] = c;
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = pa[i] * c;
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_mul_const;
-
-        return h;
+    TensorHandle value_div_const(TensorHandle a, DataType c) {
+        constexpr auto fwd = [](auto x, auto k) { return x / k; };
+        constexpr auto g = [](auto go, auto, auto k) { return go / k; };
+        return make_unary_const_ew<fwd, g>(a, c);
     }
 
-    TensorHandle value_sub_const(TensorHandle a, DataType c)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = pa[i] - c;
-
-        // backward is same as add_const: d(a-c)/da = 1
-        node.backward_fn = &AutoGrad<DataType>::bwd_add_const;
-
-        return h;
-    }
-
-    static void bwd_div_const(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType c = out.backward_scratch[0];
-        const DataType inv_c = DataType(1) / c;
-        const DataType * go = out.tensor.gradients().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * inv_c;
-    }
-
-    TensorHandle value_div_const(TensorHandle a, DataType c)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        // Store constant in scratch for the backward pass
-        node.backward_scratch[0] = c;
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = pa[i] / c;
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_div_const;
-
-        return h;
-    }
+    // =============================================================================
+    // TILE OPS
+    // =============================================================================
 
     // Tile a scalar (rank-1, single element) into a tensor of shape {N}.
     // Useful for broadcasting a scalar into shape-matched ops.
@@ -609,156 +517,40 @@ public:
     // UNARY ELEMENTWISE OPS
     // =============================================================================
 
-    static void bwd_relu(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) {
-            if (pa[i] > DataType(0)) ga[i] += go[i];
-        }
+    TensorHandle value_relu(TensorHandle a) {
+        constexpr auto fwd = [](auto x) { return x > 0 ? x : decltype(x)(0); };
+        constexpr auto g = [](auto go, auto x, auto) { return x > 0 ? go : decltype(go)(0); };
+        return make_unary_ew<fwd, g>(a);
     }
 
-    TensorHandle value_relu(TensorHandle a)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) {
-            po[i] = pa[i] > DataType(0) ? pa[i] : DataType(0);
-        }
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_relu;
-
-        return h;
+    TensorHandle value_log(TensorHandle a) {
+        constexpr auto fwd = [](auto x) { return std::log(x); };
+        constexpr auto g = [](auto go, auto x, auto) { return go / x; };
+        return make_unary_ew<fwd, g>(a);
     }
 
-    static void bwd_log(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * (DataType(1) / pa[i]);
+    TensorHandle value_exp(TensorHandle a) {
+        constexpr auto fwd = [](auto x) { return std::exp(x); };
+        constexpr auto g = [](auto go, auto, auto out) { return go * out; };
+        return make_unary_ew<fwd, g>(a);
     }
 
-    TensorHandle value_log(TensorHandle a)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = std::log(pa[i]);
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_log;
-
-        return h;
+    TensorHandle value_pow(TensorHandle a, DataType p) {
+        constexpr auto fwd = [](auto x, auto k) { return std::pow(x, k); };
+        constexpr auto g = [](auto go, auto x, auto k) { return go * k * std::pow(x, k - decltype(x)(1)); };
+        return make_unary_const_ew<fwd, g>(a, p);
     }
 
-    static void bwd_exp(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * po = out.tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * po[i];
+    TensorHandle value_erf(TensorHandle a) {
+        constexpr auto fwd = [](auto x) { return std::erf(x); };
+        constexpr auto g = [](auto go, auto x, auto) {
+            constexpr auto k = decltype(x)(1.1283791670955126); // 2/sqrt(pi)
+            return go * k * std::exp(-x * x);
+            };
+        return make_unary_ew<fwd, g>(a);
     }
 
-    TensorHandle value_exp(TensorHandle a)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = std::exp(pa[i]);
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_exp;
-
-        return h;
-    }
-
-    static void bwd_pow(AutoGrad<DataType> & g, const Node & out)
-    {
-        const DataType p = out.backward_scratch[0];
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * p * std::pow(pa[i], p - DataType(1));
-    }
-
-    TensorHandle value_pow(TensorHandle a, DataType p)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        // Store exponent in scratch for the backward pass
-        node.backward_scratch[0] = p;
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = std::pow(pa[i], p);
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_pow;
-
-        return h;
-    }
-
-    static void bwd_erf(AutoGrad<DataType> & g, const Node & out)
-    {
-        static const DataType TWO_OVER_SQRT_PI = DataType(1.1283791670955126);
-        const DataType * go = out.tensor.gradients().data();
-        const DataType * pa = g.get(out.children[0]).tensor.values().data();
-        DataType * ga = g.get(out.children[0]).tensor.gradients().data();
-        const int n = out.tensor.numel();
-        for (int i = 0; i < n; i++) ga[i] += go[i] * TWO_OVER_SQRT_PI * std::exp(-pa[i] * pa[i]);
-    }
-
-    TensorHandle value_erf(TensorHandle a)
-    {
-        const TensorShape& shape = get(a).tensor.get_shape();
-
-        TensorHandle h = allocate_node(shape);
-        Node & node = get(h);
-
-        node.children.push_back(a);
-
-        const DataType * pa = get(a).tensor.values().data();
-        DataType * po = node.tensor.values().data();
-        const int n = shape.numel();
-        for (int i = 0; i < n; i++) po[i] = std::erf(pa[i]);
-
-        node.backward_fn = &AutoGrad<DataType>::bwd_erf;
-
-        return h;
-    }
-
-    // GELU via the exact erf formulation, composed from existing ops (works tensor-wide).
+    // GELU via the exact erf formulation, composed from existing ops
     TensorHandle value_gelu(TensorHandle a)
     {
         static const DataType INV_SQRT2 = DataType(1) / std::sqrt(DataType(2));
@@ -1002,6 +794,8 @@ public:
     // =============================================================================
     // MATMUL: (M x K) @ (K x N) -> (M x N)
     // =============================================================================
+    
+    // generic version for numeric DataTypes
     static void bwd_matmul_general(AutoGrad<DataType> & g, const Node & out)
     {
         const Node & na = g.get(out.children[0]);
@@ -1069,7 +863,9 @@ public:
         return h;
     }
 
-    // Horizontal sum of 8 floats
+    // AVX2 version for floats
+    
+    // Helper: horizontal sum of 8 floats
     static inline float hsum256_ps(__m256 v)
     {
         __m128 lo = _mm256_castps256_ps128(v);
