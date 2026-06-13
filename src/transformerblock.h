@@ -17,7 +17,7 @@ struct TransformerBlock
     void init(AutoGrad<DataType> & ag, int emb_dim, int num_heads, int ffn_dim, float std_dev)
     {
         attention.init(ag, emb_dim, num_heads);
-        mlp.init(ag, emb_dim, ffn_dim, "transformer_mlp");
+        mlp.init(ag, emb_dim, ffn_dim, std_dev, "transformer_mlp");
         norm1.init(ag, emb_dim, "transformer_norm1");
         norm2.init(ag, emb_dim, "transformer_norm2");
     }
