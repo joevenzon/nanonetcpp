@@ -335,8 +335,6 @@ int main(void)
         TensorHandle loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
 
         // Backward pass: compute gradients for all parameters.
-        //optimizer.zero_grad(checkpoint);
-        grad.zero_grad();
         grad.backward(loss_node);
 
         // capture current parameter values in the checkpoint
