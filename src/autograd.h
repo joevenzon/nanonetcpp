@@ -193,6 +193,8 @@ public:
 
     std::span <const DataType> get_values() const { return values.span(); }
     std::span <const DataType> get_gradients() const { return grads.span(); }
+    std::span <DataType> get_values() { return values.span(); }
+    std::span <DataType> get_gradients() { return grads.span(); }
 
     size_t node_high_water_mark() const
     {
@@ -214,6 +216,7 @@ public:
     void snapshot_parameters()
     {
         persistent_node_count = nodes.size();
+        persistent_param_count = values.size();
     }
 
     void restore_parameter_values(const std::span <DataType> newvalues, const std::span <DataType> newgradients)
@@ -234,6 +237,13 @@ public:
             grads[i] = newgradients[i];
         }
         grads.reset_to(newgradients.size());
+    }
+
+    void restore_allocators()
+    {
+        nodes.reset_to(persistent_node_count);
+        values.reset_to(persistent_param_count);
+        grads.reset_to(persistent_param_count);
     }
 
     // =============================================================================
@@ -1653,6 +1663,12 @@ public:
         return h;
     }
 
+    void zero_grad()
+    {
+        // Zero all grads currently in use.
+        std::fill(grads.span().begin(), grads.span().end(), DataType(0));
+    }
+
     // =============================================================================
     // BACKWARD PASS
     // =============================================================================
@@ -1662,10 +1678,10 @@ public:
     // yields correct accumulation. We zero the grad arena, seed the root with 1,
     // then scatter.
     //
-    void backward(TensorHandle root_index)
+    void backward(TensorHandle root_index, bool zero_gradients = true)
     {
-        // Zero all grads currently in use.
-        std::fill(grads.span().begin(), grads.span().end(), DataType(0));
+        if (zero_gradients)
+            zero_grad();
 
         // Seed: dLoss/dRoot = 1 over the root tensor (typically a scalar).
         {
@@ -1681,6 +1697,8 @@ public:
             const Node & node = nodes[i];
             if (node.backward_fn) node.backward_fn(*this, node);
         }
+
+        restore_allocators();
     }
 
 private:
@@ -1689,6 +1707,7 @@ private:
     Arena<DataType> grads;
 
     int persistent_node_count{ 0 };
+    int persistent_param_count{ 0 };
     std::mt19937_64 rng{ 42 };
     std::uniform_real_distribution<DataType> uniform{ 0, 1 };
     std::vector <LeafParameterRecord> leaf_parameters;

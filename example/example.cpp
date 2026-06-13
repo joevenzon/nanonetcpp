@@ -289,9 +289,6 @@ int main(void)
 
     for (int step = 0; step < num_training_steps; step++)
     {
-        // Restore parameter values into the pool (pool is rebuilt each step).
-        grad.restore_parameter_values(checkpoint.values, checkpoint.grads);
-
         // Select a document from the training set and tokenize it.
         // Tokens are surrounded by BOS tokens on both sides.
         const char * current_doc = g_documents[g_train_indices[step % g_num_train]];
@@ -338,11 +335,12 @@ int main(void)
         TensorHandle loss_node = grad.value_mul_const(loss_accumulator, 1.0f / seq_len);
 
         // Backward pass: compute gradients for all parameters.
-        optimizer.zero_grad(checkpoint);
+        //optimizer.zero_grad(checkpoint);
+        grad.zero_grad();
         grad.backward(loss_node);
 
         // capture current parameter values in the checkpoint
-        checkpoint.update(grad);
+        checkpoint.update(grad, optimizer.step_count);
 
         // -------------------------------------------------------------------
         // PARAMETER UPDATE (ADAM OPTIMIZER)
@@ -350,7 +348,7 @@ int main(void)
         // Apply linear learning rate decay: lr decreases from base_lr to 0.
         float current_lr = base_learning_rate * (1.0f - (float)step / (float)num_training_steps);
         optimizer.lr = current_lr;
-        optimizer.step(checkpoint);
+        optimizer.step(grad);
 
         // Log training progress and periodically evaluate validation loss.
         float current_val_loss = 0.0f;

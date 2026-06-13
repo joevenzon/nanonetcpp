@@ -404,8 +404,8 @@ function parseCheckpoint(buffer) {
   // ParamCount (8 bytes, uint64)
   const paramCount = Number(dv.getBigUint64(offset, true)); offset += 8;
 
-  // StepCount (4 bytes, int32)
-  const stepCount = dv.getInt32(offset, true); offset += 4;
+  // StepCount (8 bytes, uint64)
+  const stepCount = Number(dv.getBigUint64(offset, true)); offset += 8;
 
   // LeafMatrixCount (4 bytes)
   const leafMatrixCount = dv.getUint32(offset, true); offset += 4;

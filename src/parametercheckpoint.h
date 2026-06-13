@@ -8,7 +8,7 @@
 #include "autograd.h"
 
 #define CHECKPOINT_MAGIC "NNCHK001"
-#define CHECKPOINT_VERSION 2
+#define CHECKPOINT_VERSION 3
 
 template <typename DataType>
 struct ParameterCheckpoint
@@ -22,17 +22,16 @@ struct ParameterCheckpoint
 	// for gradient accumulation
 	std::vector<DataType> grads;
 
-	// for the optimizer
-	std::vector<DataType> moment1;		// Adam first moment
-	std::vector<DataType> moment2;		// Adam second moment
-	int step_count = 0;					// for Adam bias correction
+	// steps so far
+	size_t step_count = 0;
+
+	// TODO: should we add optimizer state here?
+
 
 	void init(AutoGrad<DataType> & grad)
 	{
 		values.resize(grad.get_values().size(), 0);
 		grads.resize(grad.get_gradients().size(), 0);
-		moment1.resize(values.size(), 0);
-		moment2.resize(values.size(), 0);
 
 		for (int i = 0; i < values.size(); i++)
 		{
@@ -44,7 +43,7 @@ struct ParameterCheckpoint
 		update(grad);
 	}
 
-	void update(AutoGrad<DataType> & grad)
+	void update(AutoGrad<DataType> & grad, size_t steps = 0)
 	{
 		for (int i = 0; i < values.size(); i++)
 		{
@@ -57,6 +56,8 @@ struct ParameterCheckpoint
 		}
 
 		leaf_params.assign(grad.get_leaf_parameters().begin(), grad.get_leaf_parameters().end());
+
+		step_count = steps;
 	}
 
 	// Average the accumulated gradients over the number of micro-steps, for gradient accumulation.
@@ -76,7 +77,7 @@ struct ParameterCheckpoint
 	///     - Version:          4 bytes  uint32_t (little-endian)
 	///     - DataTypeID:       4 bytes  uint32_t (1 = 32-bit float)
 	///     - ParamCount:       8 bytes  uint64_t (number of parameters)
-	///     - StepCount:        4 bytes  int (signed, for Adam bias correction)
+	///     - StepCount:        4 bytes  uint64_t
 	///     - LeafParamCount:   4 bytes  uint32_t (number of LeafParameterRecord entries)
 	///   Leaf Parameter Records (variable)
 	///     For each record:
@@ -158,10 +159,6 @@ struct ParameterCheckpoint
 		          static_cast<std::streamsize>(paramCount * sizeof(DataType)));
 		out.write(reinterpret_cast<const char *>(grads.data()),
 		          static_cast<std::streamsize>(paramCount * sizeof(DataType)));
-		out.write(reinterpret_cast<const char *>(moment1.data()),
-		          static_cast<std::streamsize>(paramCount * sizeof(DataType)));
-		out.write(reinterpret_cast<const char *>(moment2.data()),
-		          static_cast<std::streamsize>(paramCount * sizeof(DataType)));
 
 		if (!out)
 		{
@@ -209,7 +206,7 @@ struct ParameterCheckpoint
 		uint64_t paramCount = 0;
 		in.read(reinterpret_cast<char *>(&paramCount), sizeof(paramCount));
 
-		int loadedStep = 0;
+		uint64_t loadedStep = 0;
 		in.read(reinterpret_cast<char *>(&loadedStep), sizeof(loadedStep));
 
 		// leaf parameter count
@@ -255,14 +252,10 @@ struct ParameterCheckpoint
 
 		values.resize(paramCount);
 		grads.resize(paramCount);
-		moment1.resize(paramCount);
-		moment2.resize(paramCount);
 		step_count = loadedStep;
 
 		in.read(reinterpret_cast<char *>(values.data()), byteCount);
 		in.read(reinterpret_cast<char *>(grads.data()), byteCount);
-		in.read(reinterpret_cast<char *>(moment1.data()), byteCount);
-		in.read(reinterpret_cast<char *>(moment2.data()), byteCount);
 
 		if (!in)
 		{
