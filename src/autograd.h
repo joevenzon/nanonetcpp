@@ -1838,7 +1838,8 @@ public:
 
         // Zero-copy: point to the EXACT same value and gradient spans as the parent
         node.tensor = Tensor<DataType>(na.tensor.values(), na.tensor.gradients(), new_shape);
-        node.children.push_back(a);
+        if (node.children.empty() || node.children.back().get_node_index() != a.get_node_index()) // don't push dups
+            node.children.push_back(a);
         node.backward_fn = nullptr; // Gradients alias perfectly; no computation needed
 
         return h;

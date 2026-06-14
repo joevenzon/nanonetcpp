@@ -71,7 +71,7 @@ float compute_validation_loss(
 
     for (int set_idx = 0; set_idx < num_val; set_idx++)
     {
-        // this resets memory use, sort of like "with torch.no_grad():"
+        // reset memory use
         grad.restore_allocators();
 
         // select a random input in the range from above

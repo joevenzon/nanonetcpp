@@ -44,7 +44,7 @@ struct Conv2dLayer
     // init
     //
     //   in_H / in_W     : spatial size of the input feature map
-    //   C_in            : input channels
+    //   C_in            : input channels (e.g. number of colors)
     //   C_out           : output channels (number of filters)
     //   k               : square kernel edge length (e.g. 3 -> 3×3)
     //   conv_stride     : stride (default 1)
@@ -97,21 +97,21 @@ struct Conv2dLayer
     // -------------------------------------------------------------------------
     TensorHandle forward(AutoGrad<DataType> & grad, TensorHandle input)
     {
-        // Step 1 — im2col: rearrange every k×k patch into a row.
+        // Step 1 - im2col: rearrange every k×k patch into a row.
         //   {batch * H_in * W_in, C_in}  ?  {batch * H_out * W_out, C_in * k * k}
         //
         // This is the only non-trivial bookkeeping; the actual multiply is
         // handled entirely by the optimised matmul below.
         TensorHandle patches = grad.value_im2col(input, H_in, W_in, kernel_size, stride, padding);
 
-        // Step 2 — matmul: applies all C_out filters simultaneously.
+        // Step 2 - matmul: applies all C_out filters simultaneously.
         //   {batch * H_out * W_out, C_in*k*k} @ {C_in*k*k, C_out}
         //   ?  {batch * H_out * W_out, C_out}
         //
         // For float DataType this dispatches to the AVX2 path automatically.
         TensorHandle out = grad.value_matmul(patches, weights);
 
-        // Step 3 — bias: same broadcast-add used by LinearLayer.
+        // Step 3 - bias: same broadcast-add used by LinearLayer.
         if (use_bias)
             return grad.value_add_rows(out, bias);
         else

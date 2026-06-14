@@ -9,3 +9,5 @@ out/
 python_weights_heatmap.html
 CMakeSettings.json
 AGENTS.md
+*-ubyte
+*.gz
