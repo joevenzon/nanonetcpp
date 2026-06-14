@@ -8,3 +8,4 @@ out/
 *.ilk
 python_weights_heatmap.html
 CMakeSettings.json
+AGENTS.md

@@ -7,6 +7,7 @@
 #include "mlplayer.h"
 #include "transformerblock.h"
 #include "parametercheckpoint.h"
+#include "conv2dlayer.h"
 
 #include <cstdio>
 #include <cmath>
@@ -887,6 +888,72 @@ static void test_allocate_matrix(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// value_im2col --------------------------------------------------------------
+static void test_im2col(AutoGrad<DataType> &ag)
+{
+    printf("test_im2col ... ");
+
+    // Input: batch=1, H_in=3, W_in=3, C_in=1, k=2, stride=1
+    // H_out = (3-2)/1 + 1 = 2, W_out = 2
+    // Input shape: {9, 1}
+    // Output shape: {4, 4}  (4 positions x 1*2*2 patch elements)
+    //
+    // Input (3x3):
+    //   1  2  3
+    //   4  5  6
+    //   7  8  9
+
+    TensorHandle input = ag.tensor_leaf({9, 1});
+    DataType *iv = ag.get(input).tensor.values().data();
+    for (int i = 0; i < 9; i++) iv[i] = DataType(i + 1);
+
+    TensorHandle patches = ag.value_im2col(input, 3, 3, 2, 1);
+
+    // Verify output shape
+    ASSERT_INT_EQ(2, ag.get(patches).tensor.get_shape().rank(), "output rank == 2");
+    ASSERT_INT_EQ(4, ag.get(patches).tensor.get_shape().dims[0], "output rows == 4");
+    ASSERT_INT_EQ(4, ag.get(patches).tensor.get_shape().dims[1], "output cols == 4 (1ch * 2*2)");
+
+    // Verify patch values (col = c*4 + ph*2 + pw)
+    const DataType *pv = ag.get(patches).tensor.values().data();
+    // Patch (oh=0, ow=0): top-left 2x2 -> {1,2,4,5}
+    ASSERT_FLOAT_EQ(1.0f, pv[0 * 4 + 0], "patch(0,0) col c=0,ph=0,pw=0 == 1");
+    ASSERT_FLOAT_EQ(2.0f, pv[0 * 4 + 1], "patch(0,0) col c=0,ph=0,pw=1 == 2");
+    ASSERT_FLOAT_EQ(4.0f, pv[0 * 4 + 2], "patch(0,0) col c=0,ph=1,pw=0 == 4");
+    ASSERT_FLOAT_EQ(5.0f, pv[0 * 4 + 3], "patch(0,0) col c=0,ph=1,pw=1 == 5");
+    // Patch (oh=0, ow=1): top-right 2x2 -> {2,3,5,6}
+    ASSERT_FLOAT_EQ(2.0f, pv[1 * 4 + 0], "patch(0,1) col 0 == 2");
+    ASSERT_FLOAT_EQ(3.0f, pv[1 * 4 + 1], "patch(0,1) col 1 == 3");
+    ASSERT_FLOAT_EQ(5.0f, pv[1 * 4 + 2], "patch(0,1) col 2 == 5");
+    ASSERT_FLOAT_EQ(6.0f, pv[1 * 4 + 3], "patch(0,1) col 3 == 6");
+    // Patch (oh=1, ow=0): bottom-left 2x2 -> {4,5,7,8}
+    ASSERT_FLOAT_EQ(4.0f, pv[2 * 4 + 0], "patch(1,0) col 0 == 4");
+    ASSERT_FLOAT_EQ(5.0f, pv[2 * 4 + 1], "patch(1,0) col 1 == 5");
+    ASSERT_FLOAT_EQ(7.0f, pv[2 * 4 + 2], "patch(1,0) col 2 == 7");
+    ASSERT_FLOAT_EQ(8.0f, pv[2 * 4 + 3], "patch(1,0) col 3 == 8");
+    // Patch (oh=1, ow=1): bottom-right 2x2 -> {5,6,8,9}
+    ASSERT_FLOAT_EQ(5.0f, pv[3 * 4 + 0], "patch(1,1) col 0 == 5");
+    ASSERT_FLOAT_EQ(6.0f, pv[3 * 4 + 1], "patch(1,1) col 1 == 6");
+    ASSERT_FLOAT_EQ(8.0f, pv[3 * 4 + 2], "patch(1,1) col 2 == 8");
+    ASSERT_FLOAT_EQ(9.0f, pv[3 * 4 + 3], "patch(1,1) col 3 == 9");
+
+    // Backward: each upstream grad = 1, so each input grad = number of patches covering it
+    ag.backward(patches);
+    const DataType *ig = ag.get(input).tensor.gradients().data();
+    // Corner pixels covered by 1 patch, edge-center by 2, center by 4
+    ASSERT_FLOAT_EQ(1.0f, ig[0], "input[0,0] grad == 1 (1 patch)");
+    ASSERT_FLOAT_EQ(2.0f, ig[1], "input[0,1] grad == 2 (2 patches)");
+    ASSERT_FLOAT_EQ(1.0f, ig[2], "input[0,2] grad == 1 (1 patch)");
+    ASSERT_FLOAT_EQ(2.0f, ig[3], "input[1,0] grad == 2 (2 patches)");
+    ASSERT_FLOAT_EQ(4.0f, ig[4], "input[1,1] grad == 4 (4 patches)");
+    ASSERT_FLOAT_EQ(2.0f, ig[5], "input[1,2] grad == 2 (2 patches)");
+    ASSERT_FLOAT_EQ(1.0f, ig[6], "input[2,0] grad == 1 (1 patch)");
+    ASSERT_FLOAT_EQ(2.0f, ig[7], "input[2,1] grad == 2 (2 patches)");
+    ASSERT_FLOAT_EQ(1.0f, ig[8], "input[2,2] grad == 1 (1 patch)");
+
+    printf("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Layer Tests
 // ---------------------------------------------------------------------------
@@ -1325,6 +1392,77 @@ static void test_parameter_checkpoint_roundtrip(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// Conv2dLayer ---------------------------------------------------------------
+static void test_conv2d_layer(AutoGrad<DataType> &ag)
+{
+    printf("test_conv2d_layer ... ");
+
+    // Input: batch=1, H_in=3, W_in=3, C_in=2
+    // Filter: k=3, C_out=1, stride=1
+    // H_out = (3-3)/1 + 1 = 1, W_out = 1
+    // Input shape: {9, 2}
+    // Weight shape: {18, 1}  (C_in * k * k = 2*3*3 = 18)
+    // Output shape: {1, 1}
+
+    Conv2dLayer<DataType> layer;
+    layer.init(ag, 3, 3, 2, 1, 3, 1, true, 0, "test_conv");
+
+    // Set input: channel 0 = 1..9, channel 1 = 10..18
+    TensorHandle input = ag.tensor_leaf({9, 2});
+    {
+        DataType *iv = ag.get(input).tensor.values().data();
+        for (int i = 0; i < 9; i++) {
+            iv[i * 2 + 0] = DataType(i + 1);       // channel 0
+            iv[i * 2 + 1] = DataType(i + 1 + 9);   // channel 1
+        }
+    }
+
+    // Set all weights to 1, bias to 100
+    {
+        DataType *wv = ag.get(layer.weights).tensor.values().data();
+        for (int i = 0; i < 18; i++) wv[i] = 1.0f;
+        DataType *bv = ag.get(layer.bias).tensor.values().data();
+        bv[0] = 100.0f;
+    }
+
+    // Forward: sum of all 18 input values + 100 = 171 + 100 = 271
+    TensorHandle output = layer.forward(ag, input);
+    ASSERT_INT_EQ(2, ag.get(output).tensor.get_shape().rank(), "output rank == 2");
+    ASSERT_INT_EQ(1, ag.get(output).tensor.get_shape().dims[0], "output rows == 1");
+    ASSERT_INT_EQ(1, ag.get(output).tensor.get_shape().dims[1], "output cols == 1");
+    ASSERT_FLOAT_EQ(271.0f, ag.get(output).tensor.values()[0], "conv2d output == 271");
+
+    // Backward
+    ag.backward(output);
+
+    // Input gradient: each element's grad = its weight = 1
+    {
+        const DataType *ig = ag.get(input).tensor.gradients().data();
+        for (int i = 0; i < 18; i++)
+            ASSERT_FLOAT_EQ(1.0f, ig[i], "input grad == 1");
+    }
+
+    // Bias gradient: 1 (single output element)
+    ASSERT_FLOAT_EQ(1.0f, ag.get(layer.bias).tensor.gradients()[0], "bias grad == 1");
+
+    // Weight gradients: each weight's grad = the corresponding input value
+    // Weight row i = c*9 + ph*3 + pw maps to input[spatial_flat * C_in + c]
+    // where spatial_flat = i % 9, c = i / 9
+    {
+        const DataType *wg = ag.get(layer.weights).tensor.gradients().data();
+        const DataType *iv = ag.get(input).tensor.values().data();
+        for (int i = 0; i < 18; i++)
+        {
+            int c = i / 9;
+            int spatial = i % 9;
+            ASSERT_FLOAT_EQ(iv[spatial * 2 + c], wg[i],
+                            "weight grad == corresponding input value");
+        }
+    }
+
+    printf("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -1457,6 +1595,9 @@ int main()
     test_add_rows(ag);
     ag.reset();
 
+    test_im2col(ag);
+    ag.reset();
+
     test_chained_computation(ag);
     ag.reset();
 
@@ -1491,6 +1632,9 @@ int main()
 
     ag.reset();
     test_parameter_checkpoint_roundtrip(ag);
+
+    ag.reset();
+    test_conv2d_layer(ag);
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;

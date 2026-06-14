@@ -1076,6 +1076,146 @@ public:
     }
 
     // =============================================================================
+    // IM2COL
+    //
+    // Unfolds every k×k spatial patch of the input into a single row so that
+    // the entire convolution reduces to one call to value_matmul.
+    //
+    // -- Shape contract
+    //
+    //   Input  : {batch * H_in * W_in, C_in}   (NHWC-fused rows)
+    //   Output : {batch * H_out * W_out, C_in * k * k}
+    //
+    //   H_out = (H_in - k) / stride + 1   (valid convolution, no padding)
+    //   W_out = (W_in - k) / stride + 1
+    //
+    // -- Column layout inside each output row
+    //
+    //   col = c * k*k + ph * k + pw
+    //   where  c  -> [0, C_in)
+    //          ph -> [0, k)   (kernel row)
+    //          pw -> [0, k)   (kernel col)
+    //
+    //   This matches the weight matrix layout {C_in*k*k, C_out} used by Conv2dLayer.
+    //
+    // -- Backward (col2im)
+    //
+    //   Each upstream gradient element is scattered back to the input pixel that
+    //   contributed to that (batch, out-row, out-col, channel, ph, pw) slot.
+    //   Multiple patches may overlap the same input pixel (when stride < k), so
+    //   contributions are accumulated with +=
+    //
+    // -- backward_scratch_int layout
+    //
+    //   [0] H_in   [1] W_in   [2] k (kernel_size)   [3] stride
+    //   C_in is recovered from children[0].shape.dims[1] at no extra cost.
+    // =============================================================================
+
+    static void bwd_im2col(AutoGrad<DataType> & g, const Node & out)
+    {
+        Node & nx = g.get(out.children[0]);
+        const int H_in = out.backward_scratch_int[0];
+        const int W_in = out.backward_scratch_int[1];
+        const int k = out.backward_scratch_int[2];
+        const int stride = out.backward_scratch_int[3];
+        const int C_in = nx.tensor.get_shape().dims[1];
+        const int batch = nx.tensor.get_shape().dims[0] / (H_in * W_in);
+        const int H_out = (H_in - k) / stride + 1;
+        const int W_out = (W_in - k) / stride + 1;
+        const int kk = k * k;
+
+        const DataType * go = out.tensor.gradients().data(); // {batch*H_out*W_out, C_in*kk}
+        DataType * gx = nx.tensor.gradients().data();  // {batch*H_in*W_in,   C_in}
+
+        // Scatter each grad element back to the input pixel that produced it.
+        // Overlapping patches (stride < k) accumulate via +=.
+        for (int b = 0; b < batch; b++)
+        {
+            for (int oh = 0; oh < H_out; oh++)
+            {
+                for (int ow = 0; ow < W_out; ow++)
+                {
+                    const DataType * go_row = go + (b * H_out * W_out + oh * W_out + ow) * (C_in * kk);
+                    for (int c = 0; c < C_in; c++)
+                    {
+                        for (int ph = 0; ph < k; ph++)
+                        {
+                            for (int pw = 0; pw < k; pw++)
+                            {
+                                const int ih = oh * stride + ph;
+                                const int iw = ow * stride + pw;
+                                const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
+                                gx[in_px] += go_row[c * kk + ph * k + pw];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // value_im2col — public forward function
+    //
+    //   x      : shape {batch * H_in * W_in, C_in}
+    //   H_in   : height of each feature map
+    //   W_in   : width  of each feature map
+    //   k      : square kernel size
+    //   stride : convolution stride (default 1)
+    TensorHandle value_im2col(TensorHandle x, int H_in, int W_in, int k, int stride = 1)
+    {
+        const Node & nx = get(x);
+        assert(nx.tensor.get_shape().rank() == 2);
+        const int C_in = nx.tensor.get_shape().dims[1];
+        const int total_in = nx.tensor.get_shape().dims[0];
+        const int batch = total_in / (H_in * W_in);
+        assert(batch * H_in * W_in == total_in && "Input rows must equal batch * H_in * W_in");
+        assert(k > 0 && stride > 0 && H_in >= k && W_in >= k);
+
+        const int H_out = (H_in - k) / stride + 1;
+        const int W_out = (W_in - k) / stride + 1;
+        const int kk = k * k;
+
+        TensorHandle h = allocate_node(TensorShape{ batch * H_out * W_out, C_in * kk });
+        Node & node = get(h);
+        node.children.push_back(x);
+        node.backward_scratch_int[0] = H_in;
+        node.backward_scratch_int[1] = W_in;
+        node.backward_scratch_int[2] = k;
+        node.backward_scratch_int[3] = stride;
+
+        const DataType * px = nx.tensor.values().data();
+        DataType * po = node.tensor.values().data();
+
+        // Copy each patch element into its row.
+        for (int b = 0; b < batch; b++)
+        {
+            for (int oh = 0; oh < H_out; oh++)
+            {
+                for (int ow = 0; ow < W_out; ow++)
+                {
+                    DataType * po_row = po + (b * H_out * W_out + oh * W_out + ow) * (C_in * kk);
+                    for (int c = 0; c < C_in; c++)
+                    {
+                        for (int ph = 0; ph < k; ph++)
+                        {
+                            for (int pw = 0; pw < k; pw++)
+                            {
+                                const int ih = oh * stride + ph;
+                                const int iw = ow * stride + pw;
+                                const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
+                                po_row[c * kk + ph * k + pw] = px[in_px];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        node.backward_fn = &AutoGrad<DataType>::bwd_im2col;
+        return h;
+    }
+
+    // =============================================================================
     // SOFTMAX ROWS: applies numerically stable softmax across the column dimension of each row independently
     // =============================================================================
     static void bwd_softmax_rows(AutoGrad<DataType> & g, const Node & out)
