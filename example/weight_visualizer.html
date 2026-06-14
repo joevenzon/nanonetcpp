@@ -216,18 +216,7 @@
     display: block;
   }
 
-  /* Fixed square container — canvas sits centred inside, never stretched */
-  .heatmap-box {
-    width: 100%;
-    max-width: 320px;
-    aspect-ratio: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg);
-    border-radius: 5px;
-    overflow: hidden;
-  }
+  /* heatmap-box is defined in the zoom-hint section below */
 
   /* color scale bar */
   .scale-bar-wrap {
@@ -281,6 +270,148 @@
     margin: 0 auto 16px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Zoom hint on heatmap hover ──────────────────────────────── */
+  .heatmap-box {
+    position: relative;
+    cursor: zoom-in;
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .heatmap-box::after {
+    content: '⤢';
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    font-size: 14px;
+    line-height: 1;
+    color: rgba(255,255,255,0.55);
+    background: rgba(0,0,0,0.45);
+    border-radius: 4px;
+    padding: 2px 5px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .heatmap-box:hover::after { opacity: 1; }
+
+  /* ── Lightbox ─────────────────────────────────────────────────── */
+  #lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(4, 5, 10, 0.92);
+    backdrop-filter: blur(6px);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0;
+  }
+  #lightbox.open { display: flex; }
+
+  #lightbox-inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    max-width: min(90vw, 90vh);
+    max-height: 90vh;
+    animation: lb-in 0.18s ease;
+  }
+  @keyframes lb-in {
+    from { opacity: 0; transform: scale(0.94); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+
+  #lightbox-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #lightbox-title strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+  #lightbox-title .lb-dims {
+    background: var(--accent-lo);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+  }
+
+  #lightbox-canvas-wrap {
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px var(--border-hi), 0 24px 60px rgba(0,0,0,0.7);
+    display: flex;
+  }
+  #lightbox-canvas {
+    image-rendering: pixelated;
+    display: block;
+    max-width: min(88vw, 88vh);
+    max-height: min(78vw, 78vh);
+  }
+
+  #lightbox-scale-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+  #lightbox-scale-wrap canvas {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    image-rendering: auto;
+  }
+  #lightbox-scale-wrap .scale-min,
+  #lightbox-scale-wrap .scale-max {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+
+  #lightbox-close {
+    position: absolute;
+    top: -14px;
+    right: -14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 1px solid var(--border-hi);
+    color: var(--dim);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, border-color 0.15s;
+    line-height: 1;
+  }
+  #lightbox-close:hover { color: var(--text); border-color: var(--text); }
+
+  #lightbox-hint {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    opacity: 0.6;
+  }
 </style>
 </head>
 <body>
@@ -320,6 +451,26 @@
 <div id="matrices">
   <h3 id="matrices-heading">Leaf matrices — values</h3>
   <div class="grid" id="grid"></div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Matrix detail">
+  <div id="lightbox-inner">
+    <button id="lightbox-close" aria-label="Close">&#x2715;</button>
+    <div id="lightbox-title">
+      <strong id="lb-name"></strong>
+      <span class="lb-dims" id="lb-dims"></span>
+    </div>
+    <div id="lightbox-canvas-wrap">
+      <canvas id="lightbox-canvas"></canvas>
+    </div>
+    <div id="lightbox-scale-wrap">
+      <span class="scale-min" id="lb-scale-min"></span>
+      <canvas id="lb-scale-bar"></canvas>
+      <span class="scale-max" id="lb-scale-max"></span>
+    </div>
+    <div id="lightbox-hint">click outside or press Esc to close</div>
+  </div>
 </div>
 
 <script>
@@ -532,7 +683,9 @@ function buildCard(m) {
   drawHeatmap(heatCanvas, m.data, m.rows, m.cols, s.min, s.max);
   const heatBox = document.createElement('div');
   heatBox.className = 'heatmap-box';
+  heatBox.title = 'Click to expand';
   heatBox.appendChild(heatCanvas);
+  heatBox.addEventListener('click', () => openLightbox(m, s));
 
   const scaleWrap = document.createElement('div');
   scaleWrap.className = 'scale-bar-wrap';
@@ -630,6 +783,75 @@ function handleFile(file) {
   };
   reader.readAsArrayBuffer(file);
 }
+
+// ── Lightbox ───────────────────────────────────────────────────
+const lightbox     = document.getElementById('lightbox');
+const lbCanvas     = document.getElementById('lightbox-canvas');
+const lbScaleBar   = document.getElementById('lb-scale-bar');
+const lbName       = document.getElementById('lb-name');
+const lbDims       = document.getElementById('lb-dims');
+const lbScaleMin   = document.getElementById('lb-scale-min');
+const lbScaleMax   = document.getElementById('lb-scale-max');
+const lbClose      = document.getElementById('lightbox-close');
+
+function drawHeatmapLarge(canvas, data, rows, cols, min, max) {
+  // Fill up to 85% of the smaller viewport dimension, max 1200px
+  const avail = Math.min(window.innerWidth, window.innerHeight) * 0.82;
+  const MAX = Math.min(1200, Math.round(avail));
+
+  let cw, ch;
+  if (cols >= rows) {
+    cw = MAX;
+    ch = Math.max(8, Math.round(MAX * rows / cols));
+  } else {
+    ch = MAX;
+    cw = Math.max(8, Math.round(MAX * cols / rows));
+  }
+
+  canvas.width  = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(cw, ch);
+  const d = imageData.data;
+  const range = max - min || 1;
+
+  for (let py = 0; py < ch; py++) {
+    for (let px = 0; px < cw; px++) {
+      const r = Math.min(rows - 1, Math.floor(py * rows / ch));
+      const c = Math.min(cols - 1, Math.floor(px * cols / cw));
+      const val = data[r * cols + c];
+      const t = (val - min) / range;
+      const [R, G, B] = viridisRGB(t);
+      const i = (py * cw + px) * 4;
+      d[i] = R; d[i+1] = G; d[i+2] = B; d[i+3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function openLightbox(m, s) {
+  lbName.textContent    = m.name || '(unnamed)';
+  lbDims.textContent    = `${m.rows}\u00d7${m.cols}`;
+  lbScaleMin.textContent = fmt(s.min);
+  lbScaleMax.textContent = fmt(s.max);
+  drawHeatmapLarge(lbCanvas, m.data, m.rows, m.cols, s.min, s.max);
+  drawScaleBar(lbScaleBar);
+  lightbox.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  lightbox.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+lbClose.addEventListener('click', closeLightbox);
+lightbox.addEventListener('click', e => {
+  if (e.target === lightbox) closeLightbox();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && lightbox.classList.contains('open')) closeLightbox();
+});
 
 // ── Event listeners ────────────────────────────────────────────
 const dropArea = document.getElementById('drop-area');
