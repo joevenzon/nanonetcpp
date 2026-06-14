@@ -1216,6 +1216,152 @@ public:
     }
 
     // =============================================================================
+    // MAX POOL 2D
+    //
+    // Applies a 2-D max-pooling window over each channel independently.
+    // Follows the same NHWC-fused layout used by value_im2col.
+    //
+    // -- Shape contract
+    //
+    //   Input  : {batch * H_in * W_in,  C}   (NHWC-fused rows)
+    //   Output : {batch * H_out * W_out, C}
+    //
+    //   H_out = (H_in - k) / stride + 1   (valid pooling, no padding)
+    //   W_out = (W_in - k) / stride + 1
+    //
+    // -- Forward
+    //
+    //   out[b, oh, ow, c] = max_{ph in [0,k), pw in [0,k)} input[b, oh*s+ph, ow*s+pw, c]
+    //
+    // -- Backward
+    //
+    //   Gradient flows only to the element that achieved the maximum in each window.
+    //   Ties are broken by scan order (first-encountered max wins), matching
+    //   torch.nn.MaxPool2d with default settings.
+    //   The argmax is recomputed during the backward pass from the saved input values.
+    //
+    // -- backward_scratch_int layout
+    //
+    //   [0] H_in   [1] W_in   [2] k (kernel_size)   [3] stride
+    //   C is recovered from children[0].shape.dims[1] at no extra cost.
+    // =============================================================================
+    static void bwd_max_pool2d(AutoGrad<DataType> & g, const Node & out)
+    {
+        Node & nx = g.get(out.children[0]);
+        const int H_in = out.backward_scratch_int[0];
+        const int W_in = out.backward_scratch_int[1];
+        const int k = out.backward_scratch_int[2];
+        const int stride = out.backward_scratch_int[3];
+        const int C = nx.tensor.get_shape().dims[1];
+        const int batch = nx.tensor.get_shape().dims[0] / (H_in * W_in);
+        const int H_out = (H_in - k) / stride + 1;
+        const int W_out = (W_in - k) / stride + 1;
+
+        const DataType * px = nx.tensor.values().data();    // {batch*H_in*W_in,  C}
+        const DataType * go = out.tensor.gradients().data(); // {batch*H_out*W_out, C}
+        DataType * gx = nx.tensor.gradients().data();  // {batch*H_in*W_in,  C}
+
+        for (int b = 0; b < batch; b++)
+        {
+            for (int oh = 0; oh < H_out; oh++)
+            {
+                for (int ow = 0; ow < W_out; ow++)
+                {
+                    const DataType * go_ptr = go + (b * H_out * W_out + oh * W_out + ow) * C;
+
+                    for (int c = 0; c < C; c++)
+                    {
+                        // Recompute argmax for this window (same tie-breaking as forward).
+                        int best_ph = 0, best_pw = 0;
+                        DataType best_val = px[(b * H_in * W_in + oh * stride * W_in + ow * stride) * C + c];
+
+                        for (int ph = 0; ph < k; ph++)
+                        {
+                            for (int pw = 0; pw < k; pw++)
+                            {
+                                const int ih = oh * stride + ph;
+                                const int iw = ow * stride + pw;
+                                const DataType v = px[(b * H_in * W_in + ih * W_in + iw) * C + c];
+                                if (v > best_val) { best_val = v; best_ph = ph; best_pw = pw; }
+                            }
+                        }
+
+                        // Scatter upstream gradient to the argmax input position.
+                        const int ih = oh * stride + best_ph;
+                        const int iw = ow * stride + best_pw;
+                        gx[(b * H_in * W_in + ih * W_in + iw) * C + c] += go_ptr[c];
+                    }
+                }
+            }
+        }
+    }
+
+    // value_max_pool2d — public forward function
+    //
+    //   x      : shape {batch * H_in * W_in, C}
+    //   H_in   : height of each feature map
+    //   W_in   : width  of each feature map
+    //   k      : square kernel (window) size
+    //   stride : pooling stride (default 2, matching torch.nn.MaxPool2d default)
+    TensorHandle value_max_pool2d(TensorHandle x, int H_in, int W_in, int k, int stride = 2)
+    {
+        const Node & nx = get(x);
+        assert(nx.tensor.get_shape().rank() == 2);
+        const int C = nx.tensor.get_shape().dims[1];
+        const int total = nx.tensor.get_shape().dims[0];
+        const int batch = total / (H_in * W_in);
+        assert(batch * H_in * W_in == total && "Input rows must equal batch * H_in * W_in");
+        assert(k > 0 && stride > 0 && H_in >= k && W_in >= k);
+
+        const int H_out = (H_in - k) / stride + 1;
+        const int W_out = (W_in - k) / stride + 1;
+
+        TensorHandle h = allocate_node(TensorShape{ batch * H_out * W_out, C });
+        Node & node = get(h);
+        node.children.push_back(x);
+        node.backward_scratch_int[0] = H_in;
+        node.backward_scratch_int[1] = W_in;
+        node.backward_scratch_int[2] = k;
+        node.backward_scratch_int[3] = stride;
+
+        const DataType * px = nx.tensor.values().data();
+        DataType * po = node.tensor.values().data();
+
+        for (int b = 0; b < batch; b++)
+        {
+            for (int oh = 0; oh < H_out; oh++)
+            {
+                for (int ow = 0; ow < W_out; ow++)
+                {
+                    DataType * po_ptr = po + (b * H_out * W_out + oh * W_out + ow) * C;
+
+                    for (int c = 0; c < C; c++)
+                    {
+                        // Find the maximum value in this k×k window for channel c.
+                        DataType max_val = px[(b * H_in * W_in + oh * stride * W_in + ow * stride) * C + c];
+
+                        for (int ph = 0; ph < k; ph++)
+                        {
+                            for (int pw = 0; pw < k; pw++)
+                            {
+                                const int ih = oh * stride + ph;
+                                const int iw = ow * stride + pw;
+                                const DataType v = px[(b * H_in * W_in + ih * W_in + iw) * C + c];
+                                if (v > max_val) max_val = v;
+                            }
+                        }
+
+                        po_ptr[c] = max_val;
+                    }
+                }
+            }
+        }
+
+        node.backward_fn = &AutoGrad<DataType>::bwd_max_pool2d;
+        return h;
+    }
+
+    // =============================================================================
     // SOFTMAX ROWS: applies numerically stable softmax across the column dimension of each row independently
     // =============================================================================
     static void bwd_softmax_rows(AutoGrad<DataType> & g, const Node & out)

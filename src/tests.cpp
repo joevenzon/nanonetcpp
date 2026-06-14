@@ -936,6 +936,233 @@ static void test_allocate_matrix(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// value_max_pool2d ----------------------------------------------------------
+static void test_max_pool2d_basic(AutoGrad<DataType> &ag)
+{
+    printf("test_max_pool2d_basic ... ");
+
+    // Input: batch=1, H_in=4, W_in=4, C=1, k=2, stride=2
+    // H_out = (4-2)/2 + 1 = 2, W_out = 2
+    // Input shape: {16, 1}
+    // Output shape: {4, 1}
+    //
+    // Input (4x4):
+    //   1  2  3  4
+    //   5  6  7  8
+    //   9 10 11 12
+    //  13 14 15 16
+    //
+    // Max pool 2x2 (stride=2):
+    //   max(1,2,5,6)  max(3,4,7,8)   =  6   8
+    //   max(9,..,14)  max(11,..,16)  =  14  16
+
+    TensorHandle input = ag.tensor_leaf({16, 1});
+    DataType *iv = ag.get(input).tensor.values().data();
+    for (int i = 0; i < 16; i++) iv[i] = DataType(i + 1);
+
+    TensorHandle pooled = ag.value_max_pool2d(input, 4, 4, 2, 2);
+
+    // Verify output shape
+    ASSERT_INT_EQ(2, ag.get(pooled).tensor.get_shape().rank(), "output rank == 2");
+    ASSERT_INT_EQ(4, ag.get(pooled).tensor.get_shape().dims[0], "output rows == 4");
+    ASSERT_INT_EQ(1, ag.get(pooled).tensor.get_shape().dims[1], "output cols == 1");
+
+    const DataType *pv = ag.get(pooled).tensor.values().data();
+    ASSERT_FLOAT_EQ(6.0f, pv[0], "pool(0,0) == max(1,2,5,6) == 6");
+    ASSERT_FLOAT_EQ(8.0f, pv[1], "pool(0,1) == max(3,4,7,8) == 8");
+    ASSERT_FLOAT_EQ(14.0f, pv[2], "pool(1,0) == max(9,10,13,14) == 14");
+    ASSERT_FLOAT_EQ(16.0f, pv[3], "pool(1,1) == max(11,12,15,16) == 16");
+
+    // Backward: gradient flows only to the argmax element in each window
+    ag.backward(pooled);
+    const DataType *ig = ag.get(input).tensor.gradients().data();
+
+    // argmax positions (0-indexed): 5,7,13,15 -> grad=1, rest grad=0
+    ASSERT_FLOAT_EQ(0.0f, ig[0], "input[0] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[1], "input[1] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[2], "input[2] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[3], "input[3] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[4], "input[4] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[5], "input[5] grad == 1 (argmax for pool 0,0)");
+    ASSERT_FLOAT_EQ(0.0f, ig[6], "input[6] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[7], "input[7] grad == 1 (argmax for pool 0,1)");
+    ASSERT_FLOAT_EQ(0.0f, ig[8], "input[8] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[9], "input[9] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[10], "input[10] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[11], "input[11] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[12], "input[12] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[13], "input[13] grad == 1 (argmax for pool 1,0)");
+    ASSERT_FLOAT_EQ(0.0f, ig[14], "input[14] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[15], "input[15] grad == 1 (argmax for pool 1,1)");
+
+    printf("\n");
+}
+
+static void test_max_pool2d_multi_channel(AutoGrad<DataType> &ag)
+{
+    printf("test_max_pool2d_multi_channel ... ");
+
+    // Input: batch=1, H_in=2, W_in=2, C=2, k=2, stride=2
+    // H_out = (2-2)/2 + 1 = 1, W_out = 1
+    // Input shape: {4, 2}
+    // Output shape: {1, 2}
+    //
+    // Channel 0 (2x2):    Channel 1 (2x2):
+    //   10  20              100 200
+    //   30  5               400  30
+    //
+    // Max pool:
+    //   Channel 0: max(10,20,30,5) = 30
+    //   Channel 1: max(100,200,400,30) = 400
+
+    TensorHandle input = ag.tensor_leaf({4, 2});
+    DataType *iv = ag.get(input).tensor.values().data();
+    // Channel 0: 10,20,30,5  Channel 1: 100,200,400,30
+    iv[0] = 10;  iv[1] = 100;
+    iv[2] = 20;  iv[3] = 200;
+    iv[4] = 30;  iv[5] = 400;
+    iv[6] = 5;   iv[7] = 30;
+
+    TensorHandle pooled = ag.value_max_pool2d(input, 2, 2, 2, 2);
+
+    ASSERT_INT_EQ(1, ag.get(pooled).tensor.get_shape().dims[0], "output rows == 1");
+    ASSERT_INT_EQ(2, ag.get(pooled).tensor.get_shape().dims[1], "output cols == 2");
+
+    const DataType *pv = ag.get(pooled).tensor.values().data();
+    ASSERT_FLOAT_EQ(30.0f, pv[0], "pool ch0 == max(10,20,30,5) == 30");
+    ASSERT_FLOAT_EQ(400.0f, pv[1], "pool ch1 == max(100,200,400,30) == 400");
+
+    // Backward
+    ag.backward(pooled);
+    const DataType *ig = ag.get(input).tensor.gradients().data();
+
+    // argmax for ch0 is value 30 at spatial index 2 -> grad[4] = 1
+    // argmax for ch1 is value 400 at spatial index 2 -> grad[5] = 1
+    ASSERT_FLOAT_EQ(0.0f, ig[0], "ch0 spatial0 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[1], "ch1 spatial0 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[2], "ch0 spatial1 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[3], "ch1 spatial1 grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[4], "ch0 spatial2 grad == 1 (argmax)");
+    ASSERT_FLOAT_EQ(1.0f, ig[5], "ch1 spatial2 grad == 1 (argmax)");
+    ASSERT_FLOAT_EQ(0.0f, ig[6], "ch0 spatial3 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[7], "ch1 spatial3 grad == 0");
+
+    printf("\n");
+}
+
+static void test_max_pool2d_strided(AutoGrad<DataType> &ag)
+{
+    printf("test_max_pool2d_strided ... ");
+
+    // Input: batch=1, H_in=3, W_in=3, C=1, k=2, stride=1
+    // H_out = (3-2)/1 + 1 = 2, W_out = 2
+    // Input shape: {9, 1}
+    // Output shape: {4, 1}
+    //
+    // Input (3x3):
+    //   1  2  3
+    //   4  5  6
+    //   7  8  9
+    //
+    // Max pool 2x2 (stride=1):
+    //   max(1,2,4,5)  max(2,3,5,6)   =  5  6
+    //   max(4,5,7,8)  max(5,6,8,9)   =  8  9
+
+    TensorHandle input = ag.tensor_leaf({9, 1});
+    DataType *iv = ag.get(input).tensor.values().data();
+    for (int i = 0; i < 9; i++) iv[i] = DataType(i + 1);
+
+    TensorHandle pooled = ag.value_max_pool2d(input, 3, 3, 2, 1);
+
+    ASSERT_INT_EQ(4, ag.get(pooled).tensor.get_shape().dims[0], "output rows == 4");
+
+    const DataType *pv = ag.get(pooled).tensor.values().data();
+    ASSERT_FLOAT_EQ(5.0f, pv[0], "pool(0,0) == max(1,2,4,5) == 5");
+    ASSERT_FLOAT_EQ(6.0f, pv[1], "pool(0,1) == max(2,3,5,6) == 6");
+    ASSERT_FLOAT_EQ(8.0f, pv[2], "pool(1,0) == max(4,5,7,8) == 8");
+    ASSERT_FLOAT_EQ(9.0f, pv[3], "pool(1,1) == max(5,6,8,9) == 9");
+
+    // Backward: with stride=1, windows overlap, so some elements can be argmax for multiple windows
+    ag.backward(pooled);
+    const DataType *ig = ag.get(input).tensor.gradients().data();
+
+    // argmax for pool(0,0)=5 at spatial index 4
+    // argmax for pool(0,1)=6 at spatial index 5
+    // argmax for pool(1,0)=8 at spatial index 7
+    // argmax for pool(1,1)=9 at spatial index 8
+    ASSERT_FLOAT_EQ(0.0f, ig[0], "input[0] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[1], "input[1] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[2], "input[2] grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[3], "input[3] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[4], "input[4] grad == 1 (argmax for pool 0,0)");
+    ASSERT_FLOAT_EQ(1.0f, ig[5], "input[5] grad == 1 (argmax for pool 0,1)");
+    ASSERT_FLOAT_EQ(0.0f, ig[6], "input[6] grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[7], "input[7] grad == 1 (argmax for pool 1,0)");
+    ASSERT_FLOAT_EQ(1.0f, ig[8], "input[8] grad == 1 (argmax for pool 1,1)");
+
+    printf("\n");
+}
+
+static void test_max_pool2d_batch(AutoGrad<DataType> &ag)
+{
+    printf("test_max_pool2d_batch ... ");
+
+    // Input: batch=2, H_in=2, W_in=2, C=1, k=2, stride=2
+    // H_out = 1, W_out = 1
+    // Input shape: {8, 1}  (rows = batch*H*W, cols = C)
+    // Output shape: {2, 1}
+    //
+    // Row layout: row = b*H*W + h*W + w
+    //   row 0: b=0,h=0,w=0  -> 10
+    //   row 1: b=0,h=0,w=1  -> 20
+    //   row 2: b=0,h=1,w=0  -> 30
+    //   row 3: b=0,h=1,w=1  -> 40
+    //   row 4: b=1,h=0,w=0  ->  1
+    //   row 5: b=1,h=0,w=1  ->  1
+    //   row 6: b=1,h=1,w=0  ->  1
+    //   row 7: b=1,h=1,w=1  ->  1
+    //
+    // Max pool:
+    //   Batch 0: max(10,20,30,40) = 40
+    //   Batch 1: max(1,1,1,1) = 1 (tie-break: first encountered)
+
+    TensorHandle input = ag.tensor_leaf({8, 1});
+    DataType *iv = ag.get(input).tensor.values().data();
+    iv[0] = 10;
+    iv[1] = 20;
+    iv[2] = 30;
+    iv[3] = 40;
+    iv[4] = 1;
+    iv[5] = 1;
+    iv[6] = 1;
+    iv[7] = 1;
+
+    TensorHandle pooled = ag.value_max_pool2d(input, 2, 2, 2, 2);
+
+    ASSERT_INT_EQ(2, ag.get(pooled).tensor.get_shape().dims[0], "output rows == 2 (2 batches)");
+
+    const DataType *pv = ag.get(pooled).tensor.values().data();
+    ASSERT_FLOAT_EQ(40.0f, pv[0], "batch0 pool == 40");
+    ASSERT_FLOAT_EQ(1.0f, pv[1], "batch1 pool == 1");
+
+    // Backward
+    ag.backward(pooled);
+    const DataType *ig = ag.get(input).tensor.gradients().data();
+
+    // Batch 0: argmax is 40 at row index 3
+    // Batch 1: tie-break -> first encountered (row index 4, the first element of batch 1's window)
+    ASSERT_FLOAT_EQ(0.0f, ig[0], "batch0 row0 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[1], "batch0 row1 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[2], "batch0 row2 grad == 0");
+    ASSERT_FLOAT_EQ(1.0f, ig[3], "batch0 row3 grad == 1 (argmax=40)");
+    ASSERT_FLOAT_EQ(1.0f, ig[4], "batch1 row0 grad == 1 (tie-break first)");
+    ASSERT_FLOAT_EQ(0.0f, ig[5], "batch1 row1 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[6], "batch1 row2 grad == 0");
+    ASSERT_FLOAT_EQ(0.0f, ig[7], "batch1 row3 grad == 0");
+
+    printf("\n");
+}
+
 // value_im2col --------------------------------------------------------------
 static void test_im2col(AutoGrad<DataType> &ag)
 {
@@ -1644,6 +1871,18 @@ int main()
     ag.reset();
 
     test_cross_entropy_loss(ag);
+    ag.reset();
+
+    test_max_pool2d_basic(ag);
+    ag.reset();
+
+    test_max_pool2d_multi_channel(ag);
+    ag.reset();
+
+    test_max_pool2d_strided(ag);
+    ag.reset();
+
+    test_max_pool2d_batch(ag);
     ag.reset();
 
     test_im2col(ag);
