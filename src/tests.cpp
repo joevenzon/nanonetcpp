@@ -1229,6 +1229,117 @@ static void test_im2col(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// value_reshape -------------------------------------------------------------
+static void test_reshape_basic(AutoGrad<DataType> &ag)
+{
+    printf("test_reshape_basic ... ");
+
+    // 1D tensor of 6 elements -> reshape to {2, 3}
+    TensorHandle a = ag.tensor_leaf({6});
+    DataType *av = ag.get(a).tensor.values().data();
+    for (int i = 0; i < 6; i++) av[i] = DataType(i + 1);  // 1..6
+
+    TensorHandle r = ag.value_reshape(a, TensorShape({2, 3}));
+
+    ASSERT_INT_EQ(2, ag.get(r).tensor.get_shape().rank(), "output rank == 2");
+    ASSERT_INT_EQ(2, ag.get(r).tensor.get_shape().dims[0], "output rows == 2");
+    ASSERT_INT_EQ(3, ag.get(r).tensor.get_shape().dims[1], "output cols == 3");
+
+    // Values should be the same (row-major: {{1,2,3},{4,5,6}})
+    ASSERT_FLOAT_EQ(1.0f, ag.get(r).tensor.values()[0], "r[0,0] == 1");
+    ASSERT_FLOAT_EQ(2.0f, ag.get(r).tensor.values()[1], "r[0,1] == 2");
+    ASSERT_FLOAT_EQ(3.0f, ag.get(r).tensor.values()[2], "r[0,2] == 3");
+    ASSERT_FLOAT_EQ(4.0f, ag.get(r).tensor.values()[3], "r[1,0] == 4");
+    ASSERT_FLOAT_EQ(5.0f, ag.get(r).tensor.values()[4], "r[1,1] == 5");
+    ASSERT_FLOAT_EQ(6.0f, ag.get(r).tensor.values()[5], "r[1,2] == 6");
+
+    // Backward: gradients should flow back since reshape is zero-copy
+    ag.backward(r);
+    for (int i = 0; i < 6; i++)
+        ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[i], "grad flows back");
+
+    printf("\n");
+}
+
+static void test_reshape_matrix_to_vector(AutoGrad<DataType> &ag)
+{
+    printf("test_reshape_matrix_to_vector ... ");
+
+    // 2x3 matrix -> flatten to {6}
+    TensorHandle a = ag.tensor_leaf({2, 3});
+    DataType *av = ag.get(a).tensor.values().data();
+    for (int i = 0; i < 6; i++) av[i] = DataType(10 * (i + 1));  // 10,20,30,40,50,60
+
+    TensorHandle r = ag.value_reshape(a, TensorShape({6}));
+
+    ASSERT_INT_EQ(1, ag.get(r).tensor.get_shape().rank(), "output rank == 1");
+    ASSERT_INT_EQ(6, ag.get(r).tensor.get_shape().dims[0], "output size == 6");
+
+    for (int i = 0; i < 6; i++)
+        ASSERT_FLOAT_EQ(DataType(10 * (i + 1)), ag.get(r).tensor.values()[i],
+                        "flattened value");
+
+    ag.backward(r);
+    for (int i = 0; i < 6; i++)
+        ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[i], "grad flows back");
+
+    printf("\n");
+}
+
+static void test_reshape_chained(AutoGrad<DataType> &ag)
+{
+    printf("test_reshape_chained ... ");
+
+    // Chain: {4, 3} -> {12} -> {3, 4} -> {6, 2}
+    TensorHandle a = ag.tensor_leaf({4, 3});
+    DataType *av = ag.get(a).tensor.values().data();
+    for (int i = 0; i < 12; i++) av[i] = DataType(i + 1);
+
+    TensorHandle r1 = ag.value_reshape(a, TensorShape({12}));
+    TensorHandle r2 = ag.value_reshape(r1, TensorShape({3, 4}));
+    TensorHandle r3 = ag.value_reshape(r2, TensorShape({6, 2}));
+
+    ASSERT_INT_EQ(6, ag.get(r3).tensor.get_shape().dims[0], "final rows == 6");
+    ASSERT_INT_EQ(2, ag.get(r3).tensor.get_shape().dims[1], "final cols == 2");
+
+    // Values should still be 1..12 in order
+    for (int i = 0; i < 12; i++)
+        ASSERT_FLOAT_EQ(DataType(i + 1), ag.get(r3).tensor.values()[i],
+                        "value preserved through chain");
+
+    // Backward through the chain
+    ag.backward(r3);
+    for (int i = 0; i < 12; i++)
+        ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[i],
+                        "grad flows back through chain");
+
+    printf("\n");
+}
+
+static void test_reshape_in_computation(AutoGrad<DataType> &ag)
+{
+    printf("test_reshape_in_computation ... ");
+
+    // Use reshape in a computation graph: create {2,3}, reshape to {6}, then sum
+    TensorHandle a = ag.tensor_leaf({2, 3});
+    DataType *av = ag.get(a).tensor.values().data();
+    av[0]=1; av[1]=2; av[2]=3;
+    av[3]=4; av[4]=5; av[5]=6;
+
+    TensorHandle r = ag.value_reshape(a, TensorShape({6}));
+    TensorHandle s = ag.value_sum(r);
+
+    ASSERT_FLOAT_EQ(21.0f, ag.get(s).tensor.values()[0], "sum(1..6) == 21");
+
+    ag.backward(s);
+    // Each element contributes to the sum, so each grad == 1
+    for (int i = 0; i < 6; i++)
+        ASSERT_FLOAT_EQ(1.0f, ag.get(a).tensor.gradients()[i],
+                        "grad through reshape + sum");
+
+    printf("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Layer Tests
 // ---------------------------------------------------------------------------
@@ -1680,7 +1791,7 @@ static void test_conv2d_layer(AutoGrad<DataType> &ag)
     // Output shape: {1, 1}
 
     Conv2dLayer<DataType> layer;
-    layer.init(ag, 3, 3, 2, 1, 3, 1, true, 0, "test_conv");
+    layer.init(ag, 3, 3, 2, 1, 3, 1, 0, true, 0, "test_conv");
 
     // Set input: channel 0 = 1..9, channel 1 = 10..18
     TensorHandle input = ag.tensor_leaf({9, 2});
@@ -1886,6 +1997,18 @@ int main()
     ag.reset();
 
     test_im2col(ag);
+    ag.reset();
+
+    test_reshape_basic(ag);
+    ag.reset();
+
+    test_reshape_matrix_to_vector(ag);
+    ag.reset();
+
+    test_reshape_chained(ag);
+    ag.reset();
+
+    test_reshape_in_computation(ag);
     ag.reset();
 
     test_chained_computation(ag);

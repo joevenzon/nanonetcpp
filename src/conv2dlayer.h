@@ -38,6 +38,7 @@ struct Conv2dLayer
     int W_in = 0;
     int kernel_size = 0;
     int stride = 1;
+    int padding = 0;
 
     // -------------------------------------------------------------------------
     // init
@@ -52,7 +53,8 @@ struct Conv2dLayer
     // -------------------------------------------------------------------------
     void init(AutoGrad<DataType> & grad,
         int in_H, int in_W, int C_in, int C_out, int k,
-        int  conv_stride = 1,
+        int conv_stride = 1,
+        int conv_padding = 1,
         bool should_use_bias = true,
         DataType std_dev = 0,
         const char * name = nullptr)
@@ -61,6 +63,7 @@ struct Conv2dLayer
         W_in = in_W;
         kernel_size = k;
         stride = conv_stride;
+        padding = conv_padding;
 
         assert(k > 0 && conv_stride > 0);
         assert(in_H >= k && in_W >= k && "Kernel larger than input spatial dimension");
@@ -99,7 +102,7 @@ struct Conv2dLayer
         //
         // This is the only non-trivial bookkeeping; the actual multiply is
         // handled entirely by the optimised matmul below.
-        TensorHandle patches = grad.value_im2col(input, H_in, W_in, kernel_size, stride);
+        TensorHandle patches = grad.value_im2col(input, H_in, W_in, kernel_size, stride, padding);
 
         // Step 2 — matmul: applies all C_out filters simultaneously.
         //   {batch * H_out * W_out, C_in*k*k} @ {C_in*k*k, C_out}

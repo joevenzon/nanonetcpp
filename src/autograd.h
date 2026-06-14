@@ -28,8 +28,8 @@ public:
     // =============================================================================
     struct Node
     {
-        static const int k_max_children = 3;
-        static const int k_max_backward_scratch_values = 4;
+        static const int k_max_children = 5;
+        static const int k_max_backward_scratch_values = 5;
 
         Tensor <DataType> tensor;
 
@@ -1118,10 +1118,11 @@ public:
         const int W_in = out.backward_scratch_int[1];
         const int k = out.backward_scratch_int[2];
         const int stride = out.backward_scratch_int[3];
+        const int padding = out.backward_scratch_int[4];
         const int C_in = nx.tensor.get_shape().dims[1];
         const int batch = nx.tensor.get_shape().dims[0] / (H_in * W_in);
-        const int H_out = (H_in - k) / stride + 1;
-        const int W_out = (W_in - k) / stride + 1;
+        const int H_out = (H_in + 2 * padding - k) / stride + 1;
+        const int W_out = (W_in + 2 * padding - k) / stride + 1;
         const int kk = k * k;
 
         const DataType * go = out.tensor.gradients().data(); // {batch*H_out*W_out, C_in*kk}
@@ -1142,10 +1143,18 @@ public:
                         {
                             for (int pw = 0; pw < k; pw++)
                             {
-                                const int ih = oh * stride + ph;
-                                const int iw = ow * stride + pw;
-                                const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
-                                gx[in_px] += go_row[c * kk + ph * k + pw];
+                                const int ih = oh * stride + ph - padding;
+                                const int iw = ow * stride + pw - padding;
+                                
+                                if (ih < 0 || ih >= H_in || iw < 0 || iw >= W_in)
+                                {
+                                    // padded zero — no gradient flows back
+                                }
+                                else
+                                {
+                                    const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
+                                    gx[in_px] += go_row[c * kk + ph * k + pw];
+                                }
                             }
                         }
                     }
@@ -1161,7 +1170,8 @@ public:
     //   W_in   : width  of each feature map
     //   k      : square kernel size
     //   stride : convolution stride (default 1)
-    TensorHandle value_im2col(TensorHandle x, int H_in, int W_in, int k, int stride = 1)
+    //   padding: convolution padding (default 0)
+    TensorHandle value_im2col(TensorHandle x, int H_in, int W_in, int k, int stride = 1, int padding = 0)
     {
         const Node & nx = get(x);
         assert(nx.tensor.get_shape().rank() == 2);
@@ -1171,8 +1181,8 @@ public:
         assert(batch * H_in * W_in == total_in && "Input rows must equal batch * H_in * W_in");
         assert(k > 0 && stride > 0 && H_in >= k && W_in >= k);
 
-        const int H_out = (H_in - k) / stride + 1;
-        const int W_out = (W_in - k) / stride + 1;
+        const int H_out = (H_in + 2 * padding - k) / stride + 1;
+        const int W_out = (W_in + 2 * padding - k) / stride + 1;
         const int kk = k * k;
 
         TensorHandle h = allocate_node(TensorShape{ batch * H_out * W_out, C_in * kk });
@@ -1182,6 +1192,7 @@ public:
         node.backward_scratch_int[1] = W_in;
         node.backward_scratch_int[2] = k;
         node.backward_scratch_int[3] = stride;
+        node.backward_scratch_int[4] = padding;
 
         const DataType * px = nx.tensor.values().data();
         DataType * po = node.tensor.values().data();
@@ -1200,10 +1211,19 @@ public:
                         {
                             for (int pw = 0; pw < k; pw++)
                             {
-                                const int ih = oh * stride + ph;
-                                const int iw = ow * stride + pw;
-                                const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
-                                po_row[c * kk + ph * k + pw] = px[in_px];
+                                const int ih = oh * stride + ph - padding;
+                                const int iw = ow * stride + pw - padding;
+
+                                // Out-of-bounds -> implicit zero (the "padding" value)
+                                if (ih < 0 || ih >= H_in || iw < 0 || iw >= W_in)
+                                {
+                                    po_row[c * kk + ph * k + pw] = DataType(0);
+                                }
+                                else
+                                {
+                                    const int in_px = (b * H_in * W_in + ih * W_in + iw) * C_in + c;
+                                    po_row[c * kk + ph * k + pw] = px[in_px];
+                                }
                             }
                         }
                     }
@@ -1302,9 +1322,11 @@ public:
     //   H_in   : height of each feature map
     //   W_in   : width  of each feature map
     //   k      : square kernel (window) size
-    //   stride : pooling stride (default 2, matching torch.nn.MaxPool2d default)
-    TensorHandle value_max_pool2d(TensorHandle x, int H_in, int W_in, int k, int stride = 2)
+    //   stride : pooling stride (default k, matching torch.nn.MaxPool2d default)
+    TensorHandle value_max_pool2d(TensorHandle x, int H_in, int W_in, int k, int stride = -1)
     {
+        if (stride == -1)
+            stride = k;
         const Node & nx = get(x);
         assert(nx.tensor.get_shape().rank() == 2);
         const int C = nx.tensor.get_shape().dims[1];
@@ -1800,6 +1822,26 @@ public:
     {
         // Zero all grads currently in use.
         std::fill(grads.span().begin(), grads.span().end(), DataType(0));
+    }
+
+    // =============================================================================
+    // RESHAPE / VIEW: zero-copy reinterpretation of tensor shape
+    // =============================================================================
+    TensorHandle value_reshape(TensorHandle a, const TensorShape & new_shape)
+    {
+        Node & na = get(a);
+        assert(na.tensor.numel() == new_shape.numel() && "Reshape must preserve total element count");
+
+        // Allocate a graph node (for topological ordering) but skip value/grad allocation
+        TensorHandle h(static_cast<int>(nodes.allocate()));
+        Node & node = get(h);
+
+        // Zero-copy: point to the EXACT same value and gradient spans as the parent
+        node.tensor = Tensor<DataType>(na.tensor.values(), na.tensor.gradients(), new_shape);
+        node.children.push_back(a);
+        node.backward_fn = nullptr; // Gradients alias perfectly; no computation needed
+
+        return h;
     }
 
     // =============================================================================
