@@ -206,29 +206,23 @@ float compute_validation_loss(
         int num_tokens = 0;
         token_sequence[num_tokens++] = g_token_bos;
         for (int i = 0; i < doc_length; i++)
+        {
             token_sequence[num_tokens++] = char_to_token_id(current_doc[i]);
+        }
         token_sequence[num_tokens++] = g_token_bos;
 
         int seq_len = num_tokens - 1;          // we predict tokens 1..num_tokens-1
         if (seq_len > model.block_size) seq_len = model.block_size;
 
         // Forward: logits shape {seq_len, vocab_size}
-        TensorHandle logits = model.forward(grad,
-            std::span<const int>(token_sequence.data(), seq_len));
+        TensorHandle logits = model.forward(grad, std::span<const int>(token_sequence.data(), seq_len));
 
-        // Row-wise softmax -> log probabilities {seq_len, vocab_size}
-        TensorHandle log_probs = grad.value_log_softmax_rows(logits);
+        // Cross-entropy loss (no backward needed for validation — just read the scalar)
+        TensorHandle loss = grad.value_cross_entropy_loss(
+            logits, std::span<const int>(token_sequence.data() + 1, seq_len));
 
-        const float * log_pvals = grad.get(log_probs).tensor.values().data();
-
-        for (int pos = 0; pos < seq_len; pos++)
-        {
-            int target_token = token_sequence[pos + 1];
-            int flat_idx = pos * vocab_size + target_token;
-            float log_p = log_pvals[flat_idx];
-            total_loss -= log_p;
-            total_positions++;
-        }
+        total_loss += grad.get(loss).tensor.values().data()[0] * seq_len;
+        total_positions += seq_len;
     }
 
     return total_positions == 0 ? 0.0f : total_loss / (float)total_positions;
@@ -317,7 +311,9 @@ int main(void)
             std::array<int, MAX_NUM_TOKENS> token_sequence;
             int num_tokens = 0;
             for (int & t : token_sequence)
+            {
                 t = g_token_bos;
+            }
             token_sequence[num_tokens++] = g_token_bos;  // Leading BOS token
             for (int i = 0; i < doc_length; i++)
             {
@@ -330,32 +326,17 @@ int main(void)
             if (seq_len > model.block_size) seq_len = model.block_size;
 
             // SINGLE whole-sequence forward pass -> logits {seq_len, vocab_size}
-            TensorHandle logits = model.forward(grad,
-                std::span<const int>(token_sequence.data(), seq_len));
+            TensorHandle logits = model.forward(grad, std::span<const int>(token_sequence.data(), seq_len));
 
-            // Row-wise softmax -> probabilities {seq_len, vocab_size}
-            TensorHandle log_probs = grad.value_log_softmax_rows(logits);
+            // determine targets by fast forwarding the token sequence by 1
+            std::span<const int> targets(token_sequence.data() + 1, seq_len);
 
-            // Accumulate loss over all positions
-            TensorHandle loss_accumulator;
+            // Cross-entropy loss (mean over positions, with gradient support)
+            TensorHandle loss_node = grad.value_cross_entropy_loss(logits, targets);
 
-            for (int pos = 0; pos < seq_len; pos++)
-            {
-                int target_token = token_sequence[pos + 1];
-                int flat_idx = pos * vocab_size + target_token;
-                TensorHandle log_prob = grad.value_select_element(log_probs, flat_idx);
-                TensorHandle neg_log_prob = grad.value_mul_const(log_prob, -1);
-
-                loss_accumulator = loss_accumulator.valid()
-                    ? grad.value_add(loss_accumulator, neg_log_prob)
-                    : neg_log_prob;
-            }
-
-            // Average the loss over all positions in the sequence.
-            // Scale loss for accumulation: divide by BOTH seq_len AND accumulation_steps so that
+            // Scale loss for gradient accumulation: divide by accumulation_steps so that
             // the sum of gradients across micro-steps equals the mean.
-            float scale = 1.0f / ((float)seq_len * (float)accumulation_steps);
-            TensorHandle loss_node = grad.value_mul_const(loss_accumulator, scale);
+            loss_node = grad.value_mul_const(loss_node, 1.0f / (float)accumulation_steps);
 
             // Backward pass: compute gradients for all parameters.
             bool zero_gradients = false;

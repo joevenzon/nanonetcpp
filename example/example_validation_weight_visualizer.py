@@ -84,7 +84,7 @@ def array_to_viridis_css(arr2d: np.ndarray) -> str:
 
     # Build a tiny SVG where each cell is a coloured rect.
     # Cap cell count for huge layers so the file stays manageable.
-    MAX_CELLS = 4096
+    MAX_CELLS = 65536
     if rows * cols > MAX_CELLS:
         scale = math.sqrt(MAX_CELLS / (rows * cols))
         new_rows = max(1, int(rows * scale))
@@ -95,7 +95,7 @@ def array_to_viridis_css(arr2d: np.ndarray) -> str:
         norm = norm[np.ix_(row_idx, col_idx)]
         rows, cols = new_rows, new_cols
 
-    CELL = 16  # px per cell in the SVG
+    CELL = 4  # px per cell in the SVG
     svg_w = cols * CELL
     svg_h = rows * CELL
 

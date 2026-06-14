@@ -1335,8 +1335,49 @@ public:
     }
 
     // =============================================================================
+    // CROSS-ENTROPY LOSS: logits {M, N} + targets {M} -> scalar {1}
+    // Equivalent to torch.nn.CrossEntropyLoss(reduction="mean")
+    // Composed from: value_log_softmax_rows, value_select_element,
+    //                value_mul_const, value_add, value_div_const
+    // =============================================================================
+    // @param logits   Tensor of shape {M, N} (raw, un-normalized scores)
+    // @param targets  Array of M integer class indices in [0, N)
+    // @return         Scalar {1} tensor with mean cross-entropy loss
+    TensorHandle value_cross_entropy_loss(TensorHandle logits, std::span<const int> targets)
+    {
+        const Node & nl = get(logits);
+        assert(nl.tensor.get_shape().rank() == 2);
+
+        const int M = nl.tensor.get_shape().dims[0];
+        const int N = nl.tensor.get_shape().dims[1];
+        assert(targets.size() == (size_t)M);
+
+        // log-softmax once -> {M, N}
+        TensorHandle log_probs = value_log_softmax_rows(logits);
+
+        // Gather -log_prob for each target, accumulate into a scalar
+        TensorHandle loss_accumulator;
+
+        for (int i = 0; i < M; i++)
+        {
+            int flat_idx = i * N + targets[i];
+            TensorHandle log_p = value_select_element(log_probs, flat_idx); // {1}
+            TensorHandle neg_log_p = value_mul_const(log_p, DataType(-1));
+
+            loss_accumulator = loss_accumulator.valid()
+                ? value_add(loss_accumulator, neg_log_p)
+                : neg_log_p;
+        }
+
+        // Mean over M positions
+        TensorHandle loss = value_div_const(loss_accumulator, DataType(M));
+        return loss;
+    }
+
+    // =============================================================================
     // REDUCTION: max element -> scalar (rank-1, single element)
     // =============================================================================
+
     static void bwd_max(AutoGrad<DataType> & g, const Node & out)
     {
         const int idx = out.backward_scratch_int[0];

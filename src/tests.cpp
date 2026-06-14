@@ -804,6 +804,54 @@ static void test_add_rows(AutoGrad<DataType> &ag)
     printf("\n");
 }
 
+// value_cross_entropy_loss --------------------------------------------------
+static void test_cross_entropy_loss(AutoGrad<DataType> &ag)
+{
+    printf("test_cross_entropy_loss ... ");
+
+    // Logits: {2, 3} = {{1, 2, 3}, {0, 0, 0}}
+    // Targets: {1, 0}
+    //
+    // Row 0: log_sum_exp = log(exp(1)+exp(2)+exp(3)) = 3.407606
+    //   log_softmax = [-2.407606, -1.407606, -0.407606]
+    //   target=1 -> -log_prob = 1.407606
+    // Row 1: log_sum_exp = log(3) = 1.098612
+    //   log_softmax = [-1.098612, -1.098612, -1.098612]
+    //   target=0 -> -log_prob = 1.098612
+    // Mean loss = (1.407606 + 1.098612) / 2 = 1.253109
+
+    TensorHandle logits = ag.tensor_leaf({2, 3});
+    DataType *lv = ag.get(logits).tensor.values().data();
+    lv[0] = 1; lv[1] = 2; lv[2] = 3;
+    lv[3] = 0; lv[4] = 0; lv[5] = 0;
+
+    int targets[] = {1, 0};
+
+    TensorHandle loss = ag.value_cross_entropy_loss(logits, std::span<const int>(targets, 2));
+
+    ASSERT_FLOAT_EQ(1.253109f, ag.get(loss).tensor.values()[0], "mean cross-entropy loss");
+
+    // Backward: d_loss/d_logits[i,k] = (softmax[i,k] - one_hot) / M
+    //
+    // Row 0 (target=1): softmax = {0.090031, 0.244728, 0.665242}
+    //   grad = {(0.090031-0)/2, (0.244728-1)/2, (0.665242-0)/2}
+    //        = {0.045016, -0.377636, 0.332621}
+    // Row 1 (target=0): softmax = {0.333333, 0.333333, 0.333333}
+    //   grad = {(0.333333-1)/2, (0.333333-0)/2, (0.333333-0)/2}
+    //        = {-0.333333, 0.166667, 0.166667}
+
+    ag.backward(loss);
+
+    ASSERT_FLOAT_EQ(0.045016f, ag.get(logits).tensor.gradients()[0], "d_logits[0,0]");
+    ASSERT_FLOAT_EQ(-0.377636f, ag.get(logits).tensor.gradients()[1], "d_logits[0,1]");
+    ASSERT_FLOAT_EQ(0.332621f, ag.get(logits).tensor.gradients()[2], "d_logits[0,2]");
+    ASSERT_FLOAT_EQ(-0.333333f, ag.get(logits).tensor.gradients()[3], "d_logits[1,0]");
+    ASSERT_FLOAT_EQ(0.166667f, ag.get(logits).tensor.gradients()[4], "d_logits[1,1]");
+    ASSERT_FLOAT_EQ(0.166667f, ag.get(logits).tensor.gradients()[5], "d_logits[1,2]");
+
+    printf("\n");
+}
+
 // tensor_leaf ---------------------------------------------------------------
 static void test_tensor_leaf(AutoGrad<DataType> &ag)
 {
@@ -1593,6 +1641,9 @@ int main()
     ag.reset();
 
     test_add_rows(ag);
+    ag.reset();
+
+    test_cross_entropy_loss(ag);
     ag.reset();
 
     test_im2col(ag);
