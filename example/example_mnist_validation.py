@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,8 +9,9 @@ from torchvision import datasets, transforms
 BATCH_SIZE   = 1
 EPOCHS       = 1
 LR           = 1e-3
-LOG_INTERVAL   = 1   # print training stats every N steps
-TEST_INTERVAL  = 10000  # run test-set evaluation every N steps
+LOG_INTERVAL   = 100   # print training stats every N steps
+TEST_INTERVAL  = 1000  # run test-set evaluation every N steps
+TEST_AMOUNT    = 1000   # number of test documents to evaluate
 DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- Data ---
@@ -59,18 +61,23 @@ def evaluate(step):
     total_loss, correct = 0.0, 0
 
     with torch.no_grad():
+        processed = 0
         for images, labels in test_loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             logits = model(images)
             total_loss += loss_fn(logits, labels).item() * len(images)
             correct    += (logits.argmax(1) == labels).sum().item()
+            processed += len(images)
+            if processed >= TEST_AMOUNT:
+                break
 
-    avg_loss = total_loss / len(test_dataset)
-    accuracy = 100.0 * correct / len(test_dataset)
+    avg_loss = total_loss / processed
+    accuracy = 100.0 * correct / processed
     print(f"Eval {step:5d} | Test  loss: {avg_loss:.4f} | Test  acc: {accuracy:.2f}%")
 
 # --- Run ---
 global_step = 0
+start_time = time.time()
 
 for epoch in range(1, EPOCHS + 1):
     model.train()
@@ -104,6 +111,10 @@ for epoch in range(1, EPOCHS + 1):
     accuracy = 100.0 * epoch_correct / len(train_dataset)
     print(f"Epoch {epoch:2d} (step {global_step:5d}) | Train loss: {avg_loss:.4f} | Train acc: {accuracy:.2f}%")
     evaluate(global_step)
+
+elapsed = time.time() - start_time
+minutes, seconds = divmod(elapsed, 60)
+print(f"Total training time: {minutes:.0f}:{seconds:05.2f}")
 
 torch.save(model.state_dict(), "checkpoint.pt")
 print(f"wrote checkpoint to disk")
