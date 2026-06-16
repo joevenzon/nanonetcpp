@@ -261,7 +261,7 @@ int main(void)
 
     AutoGrad<float> grad;
     // run at least one training iteration in debug mode to see if you're going to run out of memory
-    grad.init(8192, 1e6);
+    grad.init(42, 8192, 1e6);
 
     Model model;
     model.init(grad, vocab_size);
